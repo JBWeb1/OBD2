@@ -50,7 +50,7 @@ router.get('/export', requireAdmin, wrap(async (req, res) => {
   for (const tbl of ['customers', 'vehicles', 'invoices', 'inspections', 'remaps', 'jobs', 'parts', 'dtc_events', 'audit_log']) {
     out[tbl] = (await db.query(`SELECT * FROM ${tbl} WHERE tenant_id = $1`, [t])).rows;
   }
-  out.scan_sessions = (await db.query('SELECT id, vehicle_id, protocol, source, started_at, ended_at, summary, readiness, freeze_frame FROM scan_sessions WHERE tenant_id = $1', [t])).rows;
+  out.scan_sessions = (await db.query('SELECT id, vehicle_id, protocol, source, started_at, ended_at, summary, readiness, freeze_frame, monitor_tests FROM scan_sessions WHERE tenant_id = $1', [t])).rows;
   res.setHeader('Content-Disposition', 'attachment; filename="diagnosticos-export.json"');
   res.json(out);
 }));

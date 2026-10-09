@@ -218,6 +218,287 @@ module.exports = [
   "verified": true
  },
  {
+  "pid": "0108",
+  "name": "Short-term fuel trim — bank 2",
+  "unit": "%",
+  "cat": "STD",
+  "formula": "(A−128)×100/128",
+  "min": -100,
+  "max": 99.2,
+  "verified": true
+ },
+ {
+  "pid": "0109",
+  "name": "Long-term fuel trim — bank 2",
+  "unit": "%",
+  "cat": "STD",
+  "formula": "(A−128)×100/128",
+  "min": -100,
+  "max": 99.2,
+  "verified": true
+ },
+ {
+  "pid": "010A",
+  "name": "Fuel pressure (gauge)",
+  "unit": "kPa",
+  "cat": "STD",
+  "formula": "3A",
+  "min": 0,
+  "max": 765,
+  "verified": true
+ },
+ {
+  "pid": "0115",
+  "name": "O2 sensor 2 voltage (usually bank 1 downstream)",
+  "unit": "V",
+  "cat": "STD",
+  "formula": "A/200",
+  "min": 0,
+  "max": 1.275,
+  "verified": true
+ },
+ {
+  "pid": "0118",
+  "name": "O2 sensor 5 voltage (usually bank 2 upstream)",
+  "unit": "V",
+  "cat": "STD",
+  "formula": "A/200",
+  "min": 0,
+  "max": 1.275,
+  "verified": true
+ },
+ {
+  "pid": "0119",
+  "name": "O2 sensor 6 voltage (usually bank 2 downstream)",
+  "unit": "V",
+  "cat": "STD",
+  "formula": "A/200",
+  "min": 0,
+  "max": 1.275,
+  "verified": true
+ },
+ {
+  "pid": "0121",
+  "name": "Distance travelled with MIL on",
+  "unit": "km",
+  "cat": "STD",
+  "formula": "256A+B",
+  "min": 0,
+  "max": 65535,
+  "verified": true
+ },
+ {
+  "pid": "0122",
+  "name": "Fuel rail pressure (relative to manifold)",
+  "unit": "kPa",
+  "cat": "STD",
+  "formula": "0.079(256A+B)",
+  "min": 0,
+  "max": 5177,
+  "verified": true
+ },
+ {
+  "pid": "0123",
+  "name": "Fuel rail pressure (diesel / direct injection)",
+  "unit": "kPa",
+  "cat": "STD",
+  "formula": "10(256A+B)",
+  "min": 0,
+  "max": 655350,
+  "verified": true
+ },
+ {
+  "pid": "012C",
+  "name": "Commanded EGR",
+  "unit": "%",
+  "cat": "STD",
+  "formula": "100A/255",
+  "min": 0,
+  "max": 100,
+  "verified": true
+ },
+ {
+  "pid": "012D",
+  "name": "EGR error",
+  "unit": "%",
+  "cat": "STD",
+  "formula": "100A/128−100",
+  "min": -100,
+  "max": 99.2,
+  "verified": true
+ },
+ {
+  "pid": "012E",
+  "name": "Commanded evaporative purge",
+  "unit": "%",
+  "cat": "STD",
+  "formula": "100A/255",
+  "min": 0,
+  "max": 100,
+  "verified": true
+ },
+ {
+  "pid": "0130",
+  "name": "Warm-ups since codes cleared",
+  "unit": "count",
+  "cat": "STD",
+  "formula": "A",
+  "min": 0,
+  "max": 255,
+  "verified": true
+ },
+ {
+  "pid": "013C",
+  "name": "Catalyst temperature — bank 1 sensor 1",
+  "unit": "°C",
+  "cat": "STD",
+  "formula": "(256A+B)/10−40",
+  "min": -40,
+  "max": 1000,
+  "warnHi": 850,
+  "verified": true
+ },
+ {
+  "pid": "013E",
+  "name": "Catalyst temperature — bank 1 sensor 2",
+  "unit": "°C",
+  "cat": "STD",
+  "formula": "(256A+B)/10−40",
+  "min": -40,
+  "max": 1000,
+  "verified": true
+ },
+ {
+  "pid": "0143",
+  "name": "Absolute load",
+  "unit": "%",
+  "cat": "STD",
+  "formula": "100(256A+B)/255",
+  "min": 0,
+  "max": 400,
+  "verified": true
+ },
+ {
+  "pid": "0144",
+  "name": "Commanded air-fuel equivalence ratio (λ)",
+  "unit": "λ",
+  "cat": "STD",
+  "formula": "2(256A+B)/65536",
+  "min": 0,
+  "max": 2,
+  "verified": true
+ },
+ {
+  "pid": "0145",
+  "name": "Relative throttle position",
+  "unit": "%",
+  "cat": "STD",
+  "formula": "100A/255",
+  "min": 0,
+  "max": 100,
+  "verified": true
+ },
+ {
+  "pid": "0147",
+  "name": "Absolute throttle position B",
+  "unit": "%",
+  "cat": "STD",
+  "formula": "100A/255",
+  "min": 0,
+  "max": 100,
+  "verified": true
+ },
+ {
+  "pid": "0149",
+  "name": "Accelerator pedal position D",
+  "unit": "%",
+  "cat": "STD",
+  "formula": "100A/255",
+  "min": 0,
+  "max": 100,
+  "verified": true
+ },
+ {
+  "pid": "014C",
+  "name": "Commanded throttle actuator",
+  "unit": "%",
+  "cat": "STD",
+  "formula": "100A/255",
+  "min": 0,
+  "max": 100,
+  "verified": true
+ },
+ {
+  "pid": "014D",
+  "name": "Time run with MIL on",
+  "unit": "min",
+  "cat": "STD",
+  "formula": "256A+B",
+  "min": 0,
+  "max": 65535,
+  "verified": true
+ },
+ {
+  "pid": "0152",
+  "name": "Ethanol fuel %",
+  "unit": "%",
+  "cat": "STD",
+  "formula": "100A/255",
+  "min": 0,
+  "max": 100,
+  "verified": true
+ },
+ {
+  "pid": "0159",
+  "name": "Fuel rail absolute pressure",
+  "unit": "kPa",
+  "cat": "STD",
+  "formula": "10(256A+B)",
+  "min": 0,
+  "max": 655350,
+  "verified": true
+ },
+ {
+  "pid": "015A",
+  "name": "Relative accelerator pedal position",
+  "unit": "%",
+  "cat": "STD",
+  "formula": "100A/255",
+  "min": 0,
+  "max": 100,
+  "verified": true
+ },
+ {
+  "pid": "0161",
+  "name": "Driver's demand engine torque",
+  "unit": "%",
+  "cat": "STD",
+  "formula": "A−125",
+  "min": -125,
+  "max": 130,
+  "verified": true
+ },
+ {
+  "pid": "0162",
+  "name": "Actual engine torque",
+  "unit": "%",
+  "cat": "STD",
+  "formula": "A−125",
+  "min": -125,
+  "max": 130,
+  "verified": true
+ },
+ {
+  "pid": "0163",
+  "name": "Engine reference torque",
+  "unit": "Nm",
+  "cat": "STD",
+  "formula": "256A+B",
+  "min": 0,
+  "max": 65535,
+  "verified": true
+ },
+ {
   "pid": "2101",
   "name": "Boost actual (VAG)",
   "unit": "mbar",

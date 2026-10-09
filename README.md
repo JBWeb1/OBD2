@@ -29,19 +29,21 @@ In production (`NODE_ENV=production`) the server refuses to start with a weak or
 Serve it behind HTTPS (Web Serial needs a secure context except on localhost) and set `TRUST_PROXY=1`.
 
 ## What's included
-Diagnostics: live PIDs, stored/pending/permanent fault codes, readiness monitors + MIL, freeze frame, VIN, raw terminal, scan history with graphs and two-scan overlay.
+Diagnostics: 48 standard live sensors (pick which to poll; up to 6 per request on CAN), automatic adapter reconnect, stored/pending/permanent fault codes, readiness monitors + MIL, freeze frame, on-board monitor test results (Mode 06, CAN), VIN, raw terminal, scan history with graphs and two-scan overlay.
 Workshop: jobs board, customers, vehicles (next-service dates), remap log, inspections with photos, parts and stock (invoices deduct stock), quotes and invoices with PDF + email + customer payment links, vehicle history reports (PDF), service reminders by email/SMS/WhatsApp.
 Account: email verification, password reset, shop profile + logo, team, audit log, data export and account deletion, PayFast subscriptions.
 
 ## Using the scanner
 1. Use **Chrome or Edge on a computer** (Firefox/Safari have no Web Serial). Plug in a USB ELM327 adapter.
 2. Ignition on. Scanner → pick protocol (Auto-detect works for most cars) → **Connect adapter**.
-3. **Start live scan** polls the standard Mode 01 PIDs the car says it supports. **Stop & save** stores min/max/avg and a sampled time series on the vehicle.
+3. Under **Sensors**, tick what to watch (the list only shows what the car supports; fewer sensors = faster updates). **Start live scan** polls them; if the adapter drops out, the app reconnects by itself up to 3 times. **Stop & save** stores min/max/avg and a sampled time series on the vehicle.
 4. **Fault codes** reads Mode 03 (stored) and 07 (pending), looks codes up, saves them to the vehicle, and can clear them (Mode 04, with a confirmation).
+5. **Monitor tests (Mode 06)** shows the car's own self-test results (catalyst, O2 sensors, EGR, EVAP, misfire counts) with pass/fail against the car's limits — useful for spotting a part that is about to fail before it sets a code. Saved to the vehicle and listed on its report. CAN cars only.
 
 Honest limits:
 - Only **standard SAE J1979** PIDs are decoded (they work on any OBD2 car). Manufacturer-specific PIDs (VAG 21xx, BMW etc.) are listed in the PID reference as *unverified* and are never polled — they need validating against real ECUs first.
-- The local DTC list is a modest reference set; unknown codes show as "look up in service data". Manufacturer-specific codes need manufacturer data.
+- Fault-code descriptions: a curated list with workshop tips, plus the generic SAE J2012 meanings (misfire per cylinder, injectors, coils, O2 sensors, sensor circuits, catalyst, EVAP, network...) generated from the standard's numbering. Manufacturer-specific codes (P1xxx etc.) show as "look up in service data".
+- Mode 06 test IDs and some unit codes are manufacturer-defined; unknown units are shown raw. Pass/fail is always right because it compares the unscaled values.
 - **Demo mode** is clearly labelled; its values are simulated, stored as `source=demo`, and don't count toward plan limits.
 - Cheap clone adapters (v2.1 etc.) are unreliable; use a genuine/known-good ELM327 or OBDLink.
 - The ELM327 driver is tested against a simulated adapter, **not yet against a physical car** — do a test on a real vehicle before selling.
@@ -93,6 +95,7 @@ npm test                      # API, account, features, data + ELM327 driver tes
 TEST_DATABASE_URL=postgres://user@localhost/scratch npm test   # same suite on a real Postgres (throwaway schema per run)
 node test/dev-server.js &     # in-memory server on :3111
 node test/e2e.js              # headless-browser smoke test (needs playwright)
+node test/e2e-scanner.js      # scanner UI against a simulated ELM327: connect, live scan, cable pull + reconnect, codes, Mode 06
 ```
 
 ## Layout

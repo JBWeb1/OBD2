@@ -81,6 +81,12 @@ function vehicleReportPdf({ shop, report }) {
     section(doc, 'Inspections', ['Date', 'Type', 'Status'], inspections.map((i) => [ymd(i.created_at), i.type, i.status.replace('_', ' ')]), [90, 200, 210]);
     section(doc, 'Invoices', ['#', 'Date', 'Amount', 'Status'], invoices.map((i) => [i.number, ymd(i.issued_on), money(i.total_cents), i.status]), [60, 100, 120, 220]);
     section(doc, 'Scans', ['Date', 'Protocol', 'Source'], scans.map((s) => [ymd(s.started_at), s.protocol, s.source]), [100, 250, 150]);
+    const tested = scans.find((s) => Array.isArray(s.monitor_tests) && s.monitor_tests.length);
+    if (tested) {
+      const failed = tested.monitor_tests.filter((t) => !t.pass);
+      section(doc, `On-board monitor tests (Mode 06), ${ymd(tested.started_at)}: ${tested.monitor_tests.length - failed.length} of ${tested.monitor_tests.length} passed`,
+        ['Monitor', 'Test', 'Result', 'Allowed range'], failed.map((t) => [t.monitor, `TID ${Number(t.tid).toString(16).toUpperCase()}`, `${t.value} ${t.unit || ''}`, `${t.min} – ${t.max}`]), [170, 70, 120, 140]);
+    }
   });
 }
 module.exports = { invoicePdf, vehicleReportPdf, money };

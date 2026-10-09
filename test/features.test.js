@@ -104,6 +104,12 @@ test('scan stores readiness + freeze frame', async () => {
   assert.equal(s.status, 201);
   const got = await ctx.call('GET', `/scans/${s.body.id}`, { token: A });
   assert.equal(got.body.freeze_frame.dtc, 'P0301'); assert.equal(got.body.readiness.mil, true);
+  const tests = [{ mid: 0x21, monitor: 'Catalyst bank 1', tid: 0x80, uas: 0x24, value: 250, min: 0, max: 200, unit: 'counts', pass: false }];
+  const m6 = await ctx.call('POST', '/scans', { token: A, body: { vehicle_id: veh.id, protocol: 'CAN', monitor_tests: tests } });
+  assert.equal((await ctx.call('GET', `/scans/${m6.body.id}`, { token: A })).body.monitor_tests[0].monitor, 'Catalyst bank 1');
+  assert.equal((await ctx.call('GET', `/reports/vehicle/${veh.id}`, { token: A })).body.scans[0].monitor_tests.length, 1);
+  const pdf = await fetch(`${ctx.base}/reports/vehicle/${veh.id}/pdf`, { headers: { Authorization: 'Bearer ' + A } });
+  assert.equal(Buffer.from(await pdf.arrayBuffer()).slice(0, 5).toString(), '%PDF-');
 });
 
 test('PDF invoice, emailing only to the customer on file', async () => {

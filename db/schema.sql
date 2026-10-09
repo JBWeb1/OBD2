@@ -80,7 +80,8 @@ CREATE TABLE IF NOT EXISTS scan_sessions (
   summary     JSONB,                             -- { "010C": {min,max,avg,unit}, ... }
   samples     JSONB,                             -- capped time series for charts
   readiness   JSONB,                             -- MIL + monitor status (Mode 01 PID 01)
-  freeze_frame JSONB                             -- freeze-frame data (Mode 02)
+  freeze_frame JSONB,                            -- freeze-frame data (Mode 02)
+  monitor_tests JSONB                            -- on-board monitor test results (Mode 06)
 );
 CREATE INDEX IF NOT EXISTS scans_tenant_idx ON scan_sessions(tenant_id, started_at);
 

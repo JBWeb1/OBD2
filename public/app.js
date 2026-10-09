@@ -142,40 +142,92 @@ const saveScan = guard(async () => {
   toast(`Scan saved (#${saved.id})${live.demo ? ' — demo data' : ''}`, 'success');
   const btn = $('#scan-start'); if (btn) { btn.disabled = false; $('#scan-stop').disabled = true; }
 });
+// Which sensors to poll. Fewer sensors = faster updates. Remembered per browser; defaults to the core gauges.
+function loadPidSel(std) {
+  let saved = null; try { saved = JSON.parse(localStorage.getItem('dos_pids') || 'null'); } catch (_) { /* storage blocked */ }
+  return new Set(Array.isArray(saved) ? saved : std.filter((p) => p.gM).map((p) => p.pid));
+}
+function savePidSel(sel) { try { localStorage.setItem('dos_pids', JSON.stringify([...sel])); } catch (_) { /* ignore */ } }
+async function renderPidPicker() {
+  const box = $('#pid-pick'); if (!box) return;
+  const std = (await api('/reference/pids')).filter((p) => p.verified && ELM327.DECODE[p.pid.slice(2)]);
+  const sup = elm.connected && elm.supported.size ? elm.supported : null;
+  const shown = sup ? std.filter((p) => sup.has(p.pid.slice(2))) : std;
+  const sel = loadPidSel(std);
+  box.innerHTML = `<div class="page-sub" style="margin-bottom:6px">${sup ? `${shown.length} sensors this car supports.` : 'Connect to see which sensors this car supports.'} Fewer sensors update faster; on CAN cars up to 6 are read per request.
+      <button class="btn sm" type="button" data-act="pid-sel" data-arg="default">Core</button> <button class="btn sm" type="button" data-act="pid-sel" data-arg="all">All</button> <button class="btn sm" type="button" data-act="pid-sel" data-arg="none">None</button></div>
+    <div class="pid-pick">${shown.map((p) => `<label class="chk"><input type="checkbox" data-pid="${p.pid}" ${sel.has(p.pid) ? 'checked' : ''}> ${esc(p.name)} <span style="color:var(--muted)">${esc(p.unit)}</span></label>`).join('')}</div>`;
+  box.onchange = (e) => {
+    const cb = e.target.closest('[data-pid]'); if (!cb) return;
+    const cur = loadPidSel(std); cb.checked ? cur.add(cb.dataset.pid) : cur.delete(cb.dataset.pid); savePidSel(cur);
+  };
+  renderPidPicker.std = std;
+}
+
+// The adapter dropped out (loose plug, adapter reset): try to get it back a few times without losing the scan.
+async function tryReconnect() {
+  for (let i = 1; i <= 3 && live.running; i++) {
+    setConn(`RECONNECTING ${i}/3…`, false); toast(`Adapter connection lost — reconnecting (${i}/3)…`, 'info');
+    await new Promise((r) => setTimeout(r, 1500));
+    if (live.running && await elm.reconnect()) { setConn('LIVE · ' + (elm.protocol || 'connected'), true); toast('Reconnected — the scan continues.', 'success'); return true; }
+  }
+  return false;
+}
+
 async function startLive(demo) {
   if (live.running) return;
   const pidsAll = await api('/reference/pids');
   const std = pidsAll.filter((p) => p.verified && ELM327.DECODE[p.pid.slice(2)]);
+  const sel = loadPidSel(std);
   if (!demo) {
     if (!elm.connected) return toast('Connect the OBD2 adapter first.', 'error');
     const sup = elm.supported; // only poll PIDs the car says it supports
-    live.pids = std.filter((p) => sup.size === 0 || sup.has(p.pid.slice(2)));
-    if (!live.pids.length) return toast('The vehicle reports no supported live PIDs.', 'error');
-  } else live.pids = std;
-  Object.assign(live, { running: true, demo, stats: {}, samples: [], started: Date.now() });
+    const supported = std.filter((p) => sup.size === 0 || sup.has(p.pid.slice(2)));
+    if (!supported.length) return toast('The vehicle reports no supported live PIDs.', 'error');
+    live.pids = supported.filter((p) => sel.has(p.pid));
+    if (!live.pids.length) return toast('None of the selected sensors are supported by this car. Pick some under Sensors.', 'error');
+  } else {
+    live.pids = std.filter((p) => sel.has(p.pid));
+    if (!live.pids.length) return toast('Pick at least one sensor under Sensors.', 'error');
+  }
+  Object.assign(live, { running: true, demo, stats: {}, samples: [], started: Date.now(), blank: 0 });
   $('#scan-start').disabled = true; $('#scan-stop').disabled = false;
   const grid = $('#gauges');
   $('#chart-pid').innerHTML = live.pids.map((p) => `<option value="${p.pid}">${esc(p.name)} (${esc(p.unit)})</option>`).join('');
   grid.innerHTML = live.pids.map((p) => `<div class="gauge" id="g-${p.pid}"><div class="g-label">${esc(p.name)}</div><div class="g-value">—</div><div class="g-unit">${esc(p.unit)}</div><div class="g-bar"><div class="g-fill" style="width:0"></div></div></div>`).join('');
   const tick = async () => {
+    if (!live.running) return;
     const sample = { t: Date.now() - live.started };
+    let values;
+    try {
+      values = demo ? Object.fromEntries(live.pids.map((p) => [p.pid.slice(2), demoValue(p)])) : await elm.readPids(live.pids.map((p) => p.pid.slice(2)));
+    } catch (e) {
+      if (live.running && !demo && await tryReconnect()) { live.timer = setTimeout(tick, 50); return; }
+      if (live.running) { live.running = false; toast('Adapter disconnected: ' + e.message, 'error'); setConn('CONNECT OBD2', false); }
+      $('#scan-start').disabled = false; $('#scan-stop').disabled = true;
+      return;
+    }
+    if (!live.running) return;
+    let got = 0;
     for (const p of live.pids) {
-      if (!live.running) return;
-      let v;
-      try { v = demo ? demoValue(p) : await elm.readPid(p.pid.slice(2)); } catch (e) { live.running = false; toast(e.message, 'error'); setConn('CONNECT OBD2', false); break; }
+      const v = values[p.pid.slice(2)];
       const g = $('#g-' + p.pid); if (!g) continue;
       if (v === null || v === undefined || Number.isNaN(v)) { g.querySelector('.g-value').textContent = 'n/a'; continue; }
+      got++;
       const shown = Math.abs(v) >= 100 ? Math.round(v) : +v.toFixed(2);
       g.classList.add('active'); g.querySelector('.g-value').textContent = shown;
       g.querySelector('.g-fill').style.width = Math.max(0, Math.min(100, ((v - p.min) / (p.max - p.min)) * 100)) + '%';
-      const s = live.stats[p.pid] || (live.stats[p.pid] = { name: p.name, unit: p.unit, min: v, max: v, sum: 0, n: 0 });
-      s.min = Math.min(s.min, v); s.max = Math.max(s.max, v); s.sum += v; s.n++;
+      const st = live.stats[p.pid] || (live.stats[p.pid] = { name: p.name, unit: p.unit, min: v, max: v, sum: 0, n: 0 });
+      st.min = Math.min(st.min, v); st.max = Math.max(st.max, v); st.sum += v; st.n++;
       sample[p.pid] = +v.toFixed(2);
     }
+    // Several rounds with no answer at all usually means the adapter hung: reset it.
+    live.blank = got ? 0 : live.blank + 1;
+    if (!demo && live.blank >= 3) { live.blank = 0; if (!(await tryReconnect())) { live.running = false; toast('The car stopped answering. Check the ignition and the adapter.', 'error'); setConn('CONNECT OBD2', false); } }
     live.samples.push(sample);
     drawLive();
     if (live.running) live.timer = setTimeout(tick, demo ? 400 : 50);
-    else if (!demo) { $('#scan-start').disabled = false; $('#scan-stop').disabled = true; }
+    else { $('#scan-start').disabled = false; $('#scan-stop').disabled = true; }
   };
   tick();
 }
@@ -220,6 +272,7 @@ views.scanner = async (el) => {
       ${elm.connected ? `<span class="badge b-green">${esc(elm.protocol)}</span>` : '<span class="badge b-amber">Not connected</span>'}
       <button class="btn sm" data-act="read-vin" style="margin-left:8px">Read VIN</button> <span id="vin-out" style="font-family:var(--fm);font-size:12px"></span>
     </div>
+    <div class="card" style="margin-bottom:12px"><div class="card-title">Sensors</div><div id="pid-pick"><div class="empty">Loading…</div></div></div>
     <div class="page-actions" style="margin-bottom:12px">
       <button class="btn success" id="scan-start" data-act="scan-start">▶ Start live scan</button>
       <button class="btn danger" id="scan-stop" data-act="scan-stop" disabled>■ Stop &amp; save</button>
@@ -230,6 +283,7 @@ views.scanner = async (el) => {
     <div class="card" style="margin-bottom:12px"><div class="card-title">Live graph <select id="chart-pid" style="font-size:12px"></select></div><canvas class="chart" id="live-chart"></canvas></div>
     <div class="card"><div class="card-title">Gauges <span id="scan-tag"></span></div><div class="gauge-grid" id="gauges"><div class="empty" style="grid-column:1/-1">Connect an adapter and start a scan. Only PIDs your car reports as supported are shown.</div></div></div>`);
   if (live.running) { $('#scan-start').disabled = true; $('#scan-stop').disabled = false; }
+  renderPidPicker();
 };
 
 views.dtc = async (el) => {
@@ -239,9 +293,9 @@ views.dtc = async (el) => {
     `<div class="card" style="margin-bottom:12px"><div class="card-title">Read from vehicle</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select id="dtc-vehicle" style="min-width:240px">${vehOptions(vehicles)}</select>
       <button class="btn primary" data-act="dtc-read">⟳ Read stored + pending</button>
-      <button class="btn" data-act="readiness">Readiness &amp; MIL</button><button class="btn" data-act="freeze">Freeze frame</button>
+      <button class="btn" data-act="readiness">Readiness &amp; MIL</button><button class="btn" data-act="freeze">Freeze frame</button><button class="btn" data-act="mode06">Monitor tests (Mode 06)</button>
       <button class="btn danger" data-act="dtc-clear">✕ Clear codes</button></div><div id="dtc-extra"></div>
-      <div class="annotation" style="margin-top:10px">Reading codes saves a scan to the vehicle and counts toward your monthly scan limit. Clearing codes also resets readiness monitors — the car will not pass an emissions check until it has driven through its drive cycle.</div>
+      <div class="annotation" style="margin-top:10px">Reading codes saves the result to the vehicle's history; it does not count toward your monthly live-scan limit. Clearing codes also resets readiness monitors — the car will not pass an emissions check until it has driven through its drive cycle.</div>
       <div id="dtc-live"></div></div>
     <div class="card"><div class="card-title">History</div>${table(['Date', 'Vehicle', 'Code', 'Description', 'Severity', 'Status'],
       events.map((e) => `<tr><td>${day(e.created_at)}</td><td>${esc(vehLabel(vmap.get(e.vehicle_id)))}</td><td><b>${esc(e.code)}</b></td><td>${esc(e.info.name)}</td><td>${sevBadge(e.info.sev)}</td><td><span class="badge ${e.status === 'cleared' ? 'b-green' : 'b-amber'}">${esc(e.status)}</span></td></tr>`))}</div>`);
@@ -634,6 +688,24 @@ Object.assign(actions, {
     state.lastFreeze = ff; const nm = new Map(pids.map((p) => [p.pid.slice(2), p]));
     $('#dtc-extra').innerHTML = `<div style="margin-top:12px"><b>Freeze frame</b>${ff.dtc ? ` — triggered by <span class="badge b-amber">${esc(ff.dtc)}</span>` : ''}${table(['Parameter', 'Value'], Object.entries(ff.values).map(([k, v]) => `<tr><td>${esc((nm.get(k) || {}).name || k)}</td><td>${Math.abs(v) >= 100 ? Math.round(v) : +v.toFixed(2)} ${esc((nm.get(k) || {}).unit || '')}</td></tr>`))}</div>`;
   }),
+  mode06: guard(async () => {
+    if (!elm.connected) return toast('Connect the adapter first.', 'error');
+    toast('Reading on-board monitor tests…', 'info');
+    const r = await elm.readMonitorTests();
+    if (!r) return toast(elm.isCan ? 'The car did not report any monitor test results.' : 'Monitor tests (Mode 06) are only read on CAN cars (most 2008+) in this version.', 'info');
+    const failed = r.filter((t) => !t.pass).length;
+    $('#dtc-extra').innerHTML = `<div style="margin-top:12px"><b>On-board monitor tests</b> <span class="badge ${failed ? 'b-red' : 'b-green'}">${r.length - failed} of ${r.length} passed</span>
+      ${table(['Monitor', 'Test', 'Result', 'Allowed range', ''], r.map((t) => `<tr><td>${esc(t.monitor)}</td><td>${t.tid.toString(16).toUpperCase().padStart(2, '0')}</td><td>${t.value} ${esc(t.unit)}</td><td>${t.min} – ${t.max}</td><td><span class="badge ${t.pass ? 'b-green' : 'b-red'}">${t.pass ? 'Pass' : 'FAIL'}</span></td></tr>`))}
+      <div class="page-sub" style="margin-top:6px">These are the car's own self-test results. A value close to its limit points at a part that is wearing out before it sets a fault code. Test IDs are manufacturer-defined — check service data for what each one measures.</div></div>`;
+    const vid = Number($('#dtc-vehicle').value) || null;
+    if (vid) { await api('/scans', { method: 'POST', body: { vehicle_id: vid, protocol: elm.protocol, source: 'adapter', monitor_tests: r } }); toast('Monitor tests saved to the vehicle history.', 'success'); }
+  }),
+  'pid-sel': async (which) => {
+    const std = renderPidPicker.std || []; const sup = elm.connected && elm.supported.size ? elm.supported : null;
+    const avail = std.filter((p) => !sup || sup.has(p.pid.slice(2)));
+    savePidSel(new Set(which === 'all' ? avail.map((p) => p.pid) : which === 'none' ? [] : std.filter((p) => p.gM).map((p) => p.pid)));
+    renderPidPicker();
+  },
   'term-save': () => saveBlob(new Blob([termLog.map(([d, t]) => `${d} ${t}`).join('\n')], { type: 'text/plain' }), 'obd-terminal-log.txt'),
   'job-new': guard(async () => openModal('New job', await jobForm(), guard(async (f) => { await api('/jobs', { method: 'POST', body: jobBody(f) }); closeModal(); go('jobs'); }))),
   'job-edit': guard(async (id) => { const j = views.jobs.rows.find((x) => x.id === Number(id)); openModal('Edit job', await jobForm(j), guard(async (f) => { await api('/jobs/' + id, { method: 'PATCH', body: jobBody(f) }); closeModal(); go('jobs'); })); }),

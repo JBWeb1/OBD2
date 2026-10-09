@@ -52,7 +52,7 @@ scans.get('/:id', wrap(async (req, res) => {
 // Saves a finished scan from the browser. `source: "adapter"` = real ELM327 readings and counts against the plan.
 scans.post('/', wrap(async (req, res) => {
   const { values, error } = sanitize(req.body, {
-    vehicle_id: 'int', protocol: 'text', source: 'enum:adapter|demo', summary: 'json', samples: 'json', readiness: 'json', freeze_frame: 'json',
+    vehicle_id: 'int', protocol: 'text', source: 'enum:adapter|demo', summary: 'json', samples: 'json', readiness: 'json', freeze_frame: 'json', monitor_tests: 'json',
   });
   if (error) throw new HttpError(400, error);
   const source = values.source || 'adapter';
@@ -70,9 +70,9 @@ scans.post('/', wrap(async (req, res) => {
 
   const out = await db.transaction(async (c) => {
     const { rows } = await c.query(
-      `INSERT INTO scan_sessions (tenant_id, vehicle_id, user_id, protocol, source, ended_at, summary, samples, readiness, freeze_frame)
-       VALUES ($1,$2,$3,$4,$5, now(), $6, $7, $8, $9) RETURNING *`,
-      [t, values.vehicle_id || null, req.user.id, values.protocol || null, source, values.summary || null, values.samples || null, values.readiness || null, values.freeze_frame || null]);
+      `INSERT INTO scan_sessions (tenant_id, vehicle_id, user_id, protocol, source, ended_at, summary, samples, readiness, freeze_frame, monitor_tests)
+       VALUES ($1,$2,$3,$4,$5, now(), $6, $7, $8, $9, $10) RETURNING *`,
+      [t, values.vehicle_id || null, req.user.id, values.protocol || null, source, values.summary || null, values.samples || null, values.readiness || null, values.freeze_frame || null, values.monitor_tests || null]);
     const scan = rows[0];
     if (values.vehicle_id && source === 'adapter') {
       for (const d of codes) {

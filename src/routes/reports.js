@@ -33,7 +33,7 @@ async function vehicleReport(req) {
   const q = (sql) => db.query(sql, [t, id]).then((r) => r.rows);
   const [customer, scans, dtcs, invoices, inspections, remaps] = await Promise.all([
     veh.customer_id ? db.query('SELECT * FROM customers WHERE id = $1 AND tenant_id = $2', [veh.customer_id, t]).then((r) => r.rows[0] || null) : null,
-    q('SELECT id, protocol, source, started_at, summary FROM scan_sessions WHERE tenant_id = $1 AND vehicle_id = $2 ORDER BY started_at DESC LIMIT 50'),
+    q('SELECT id, protocol, source, started_at, summary, monitor_tests FROM scan_sessions WHERE tenant_id = $1 AND vehicle_id = $2 ORDER BY started_at DESC LIMIT 50'),
     q('SELECT * FROM dtc_events WHERE tenant_id = $1 AND vehicle_id = $2 ORDER BY created_at DESC'),
     q('SELECT * FROM invoices WHERE tenant_id = $1 AND vehicle_id = $2 ORDER BY issued_on DESC'),
     q('SELECT * FROM inspections WHERE tenant_id = $1 AND vehicle_id = $2 ORDER BY created_at DESC'),
