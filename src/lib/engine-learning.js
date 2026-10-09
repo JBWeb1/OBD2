@@ -9,6 +9,8 @@ function engineKey(v) {
   return [norm(v.make), norm(v.model), norm(v.engine)].join('|');
 }
 const engineLabel = (v) => `${v.make} ${v.model}${v.engine ? ' ' + v.engine : ''}`;
+// Key for matching an ECU name across cars/shops: "Bosch MED17.5.5" and "bosch med 17.5.5" are the same ECU type.
+const ecuKey = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9.]+/g, ' ').trim();
 
 function percentile(sorted, q) {
   if (!sorted.length) return null;
@@ -230,4 +232,4 @@ function tuneReadiness({ openDtcs = 0, readiness = null, monitorTests = null, su
   return { verdict, checks };
 }
 
-module.exports = { engineKey, engineLabel, learnProfile, compareToProfile, universalChecks, pullPeaks, analysePull, comparePulls, powerFromMaf, learnCalibrations, softwareChange, tuneReadiness, MIN_SCANS, MIN_VEHICLES };
+module.exports = { engineKey, engineLabel, ecuKey, learnProfile, compareToProfile, universalChecks, pullPeaks, analysePull, comparePulls, powerFromMaf, learnCalibrations, softwareChange, tuneReadiness, MIN_SCANS, MIN_VEHICLES };

@@ -19,3 +19,14 @@ ALTER TABLE scan_sessions ADD COLUMN IF NOT EXISTS kind TEXT;
 ALTER TABLE scan_sessions ADD COLUMN IF NOT EXISTS ecu_info JSONB;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS share_engine_data BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE remaps ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT now();
+CREATE TABLE IF NOT EXISTS ecu_profiles (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  ecu_name TEXT NOT NULL, ecu_key TEXT NOT NULL, make TEXT,
+  access_method TEXT NOT NULL DEFAULT 'unknown', tool TEXT, security_note TEXT,
+  road_legal TEXT NOT NULL DEFAULT 'check', notes TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT now(), updated_at TIMESTAMP NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, ecu_key)
+);
+CREATE INDEX IF NOT EXISTS ecu_profiles_tenant_idx ON ecu_profiles(tenant_id);
+CREATE INDEX IF NOT EXISTS ecu_profiles_key_idx ON ecu_profiles(ecu_key);

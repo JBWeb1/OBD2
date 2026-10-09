@@ -55,6 +55,7 @@ Honest limits:
 - **Record a pull:** arm it, go to full throttle on a dyno or closed road; it records from full throttle until lift-off. Each pull gets a virtual dyno curve and checks for knock (timing pulled back while rpm climbs), lean commanded mixture under boost, intake heat soak and boost taper. Tick two pulls to overlay before/after.
 - **Honest limits:** power and torque are *estimated from airflow* (petrol, about ±15%) — reliable for before/after on the same car, not a dyno replacement. Knock is inferred from timing retard (standard OBD2 has no knock-sensor PID). An ELM327 cannot read or write ECU map files; flashing needs a dedicated tool. Diesel and engines without a MAF sensor get peaks and warnings but no power estimate.
 - **Shared learning** (Settings → Engine learning) is opt-in on both sides and only ever returns aggregates — no customers, plates, VINs or vehicle records leave a workshop.
+- **ECU tuning notes (reference library):** document how each ECU type is worked on — access method (OBD / bench / boot), the tool used, security notes, and whether a tune is road-legal. Auto-matched to a car by its read ECU name. This is documentation only: it does **not** unlock, flash, modify, or bypass manufacturer security on any ECU — flashing needs a licensed tool. With shared learning on, notes are pooled anonymously by ECU type (no shop identity, no customer data). It deliberately excludes anything that defeats manufacturer security or emissions equipment.
 
 ## Plans and billing
 | Plan | Price (ZAR/mo) | Live scans/month | Team members |

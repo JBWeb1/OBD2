@@ -11,6 +11,7 @@ function fakeSerial() {
     ATZ: 'ELM327 v1.5', ATE0: 'OK', ATL0: 'OK', ATS0: 'OK', ATH0: 'OK', ATAT1: 'OK', ATSP0: 'OK', ATDP: 'AUTO, ISO 15765-4 (CAN 11/500)',
     '0100': '4100983F8001', '0120': '412000022001', '0140': '414044000000',
     '0904': '013\n0:49040130334339\n1:3036303536444B\n2:2034343231', '0906': '490601A1B2C3D4',
+    '090A': '017\n0:490A01426F7363\n1:68204D45443137\n2:2E352E35000000\n3:0000',
     '03': '4302030104 20'.replace(/ /g, ''), '07': '4700', '0A': '4A00',
     '0600': '460000000001', '0620': '462080000000', '0621': '013\n0:46218024007800\n1:0000C821810B03\n2:8400640320',
   };
@@ -104,6 +105,19 @@ function fakeSerial() {
   await p.waitForSelector('#tune-body :text("Tune readiness")');
   await p.click('[data-act=tune-ecu]'); await p.waitForSelector('#tune-body td:has-text("03C906056DK 4421")');
   if (!(await p.locator('#tune-body td:has-text("A1B2C3D4")').count())) problems.push('CVN not shown');
+  // ECU tuning note: the read ECU name prefills the form; saving shows it back as "yours"
+  await p.waitForSelector('#tune-body :text("Bosch MED17.5.5")');
+  await p.click('[data-act=ecu-note]');
+  await p.waitForSelector('#modal-form [name=ecu_name]');
+  if ((await p.inputValue('#modal-form [name=ecu_name]')) !== 'Bosch MED17.5.5') problems.push('ECU name not prefilled from the read');
+  await p.selectOption('#modal-form [name=access_method]', 'bench');
+  await p.fill('#modal-form [name=tool]', 'KESS3');
+  await p.selectOption('#modal-form [name=road_legal]', 'track');
+  await p.fill('#modal-form [name=security_note]', 'OBD locked from MY2018 - bench only');
+  await p.click('#modal-form button[type=submit]');
+  await p.waitForSelector('#tune-body td:has-text("KESS3")');
+  if (!(await p.locator('#tune-body :text("track only")').count())) problems.push('road-legal badge not shown');
+  if (!(await p.locator('#tune-body .badge:has-text("yours")').count())) problems.push('own ECU note not marked yours');
   await p.click('[data-act=pull-arm]'); await p.waitForSelector('#pull-box :text("ARMED")');
   await p.evaluate(() => { window.__thr = 'FF'; }); await p.waitForSelector('#pull-box :text("RECORDING")');
   await p.waitForTimeout(1800); await p.evaluate(() => { window.__thr = '20'; });

@@ -208,3 +208,50 @@ test('API: virtual dyno per pull and overlaid curves in the comparison', async (
   assert.ok(c.after.peak.kw > c.before.peak.kw);
   assert.equal(c.before.curve.length, c.after.curve.length);
 });
+
+test('ECU reference: create/upsert/delete, validation, tenant isolation', async () => {
+  const bad = await ctx.call('POST', '/tuning/ecu', { token: A, body: { make: 'VW' } });
+  assert.equal(bad.status, 400, 'ECU name required');
+  const p = await ctx.call('POST', '/tuning/ecu', { token: A, body: { ecu_name: 'Bosch MED17.5.5', make: 'VW/Audi', access_method: 'bench', tool: 'KESS3', road_legal: 'track', security_note: 'OBD locked from MY2018', notes: 'Boot mode needs ECU out.' } });
+  assert.equal(p.status, 201); assert.equal(p.body.ecu_key, 'bosch med17.5.5'); assert.equal(p.body.access_method, 'bench');
+  // upsert: same ECU name for the same shop updates, does not duplicate
+  const up = await ctx.call('POST', '/tuning/ecu', { token: A, body: { ecu_name: 'bosch  MED17.5.5', access_method: 'nonsense', road_legal: 'road', tool: 'Autotuner' } });
+  assert.equal(up.body.id, p.body.id); assert.equal(up.body.access_method, 'unknown', 'invalid method falls back'); assert.equal(up.body.tool, 'Autotuner');
+  const mine = await ctx.call('GET', '/tuning/ecu', { token: A });
+  assert.equal(mine.body.own.length, 1); assert.deepEqual(mine.body.access, ['obd', 'bench', 'boot', 'unknown']);
+  assert.equal((await ctx.call('GET', '/tuning/ecu', { token: B })).body.own.length, 0, 'not visible to another shop');
+  assert.equal((await ctx.call('DELETE', `/tuning/ecu/${p.body.id}`, { token: B })).status, 404, 'other shop cannot delete it');
+  assert.equal((await ctx.call('DELETE', `/tuning/ecu/${p.body.id}`, { token: A })).status, 204);
+  assert.equal((await ctx.call('GET', '/tuning/ecu', { token: A })).body.own.length, 0);
+});
+
+test('ECU reference shows on the vehicle whose ECU name matches, and is opt-in shared & anonymised', async () => {
+  await ctx.call('POST', '/tuning/ecu', { token: A, body: { ecu_name: 'ECM-EngineControl', access_method: 'obd', tool: 'MyGenius', road_legal: 'road' } });
+  const v = await car(A, '1.8 TSI');
+  await scan(A, { vehicle_id: v, ecu_info: { calids: ['8V0906259'], names: ['ECM-EngineControl'], vin: 'WVWZZZ6RZHY654321' } });
+  const own = (await ctx.call('GET', `/tuning/vehicle/${v}`, { token: A })).body;
+  assert.deepEqual(own.ecu.names, ['ECM-EngineControl']);
+  assert.equal(own.ecu.documented, true);
+  assert.equal(own.ecu.reference[0].entries[0].tool, 'MyGenius');
+
+  // shared: B documents an ECU; C sees it only when both opt in, and without any tenant identity
+  await ctx.call('POST', '/tuning/ecu', { token: B, body: { ecu_name: 'Continental SID208', access_method: 'bench', tool: 'Trasdata', road_legal: 'track', security_note: 'OBD read only' } });
+  const cv = await car(C, '2.0 TDI');
+  await scan(C, { vehicle_id: cv, ecu_info: { calids: ['04L906056'], names: ['Continental SID208'] } });
+  await ctx.call('PUT', '/shop', { token: C, body: { share_engine_data: false } });
+  await ctx.call('PUT', '/shop', { token: B, body: { share_engine_data: false } });
+  const before = (await ctx.call('GET', `/tuning/vehicle/${cv}`, { token: C })).body;
+  assert.equal(before.ecu.reference.length, 0, 'nothing shared until both opt in');
+  await ctx.call('PUT', '/shop', { token: C, body: { share_engine_data: true } });
+  assert.equal((await ctx.call('GET', `/tuning/vehicle/${cv}`, { token: C })).body.ecu.reference.length, 0, 'C alone is not enough');
+  await ctx.call('PUT', '/shop', { token: B, body: { share_engine_data: true } });
+  const after = (await ctx.call('GET', `/tuning/vehicle/${cv}`, { token: C })).body;
+  assert.equal(after.ecu.reference.length, 1);
+  assert.equal(after.ecu.reference[0].entries[0].access_method, 'bench');
+  assert.equal(after.ecu.documented, false, 'C has no note of its own for this ECU');
+  const lib = await ctx.call('GET', '/tuning/ecu', { token: C });
+  assert.ok(lib.body.reference.some((r) => r.ecu_key === 'continental sid208'));
+  const raw = JSON.stringify(after.ecu) + JSON.stringify(lib.body.reference);
+  const bId = (await db.query(`SELECT id FROM tenants WHERE name = 'Tune B'`)).rows[0].id;
+  assert.ok(!raw.includes(`t${bId}`) && !raw.includes('tenant_id') && !raw.includes('"id":'), 'no shop/tenant identity leaks into shared reference');
+});

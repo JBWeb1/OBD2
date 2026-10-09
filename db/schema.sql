@@ -205,3 +205,23 @@ CREATE TABLE IF NOT EXISTS parts (
   created_at  TIMESTAMP NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS parts_tenant_idx ON parts(tenant_id);
+
+-- A workshop's documented notes about an ECU TYPE (not a car): how that ECU is read/written, which tool handles
+-- it, and whether a tune is road-legal. This is a reference library, not a tool that unlocks or modifies anything.
+CREATE TABLE IF NOT EXISTS ecu_profiles (
+  id            SERIAL PRIMARY KEY,
+  tenant_id     INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  ecu_name      TEXT NOT NULL,                    -- e.g. "Bosch MED17.5.5" (often from the Mode 09 ECU name)
+  ecu_key       TEXT NOT NULL,                    -- normalised ecu_name, for matching
+  make          TEXT,
+  access_method TEXT NOT NULL DEFAULT 'unknown',  -- obd | bench | boot | unknown (how it is read/written — documented)
+  tool          TEXT,                             -- professional tool used, e.g. "KESS3" (free text)
+  security_note TEXT,                             -- e.g. "OBD locked from MY2018 — bench only"
+  road_legal    TEXT NOT NULL DEFAULT 'check',    -- road | track | check
+  notes         TEXT,
+  created_at    TIMESTAMP NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMP NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, ecu_key)
+);
+CREATE INDEX IF NOT EXISTS ecu_profiles_tenant_idx ON ecu_profiles(tenant_id);
+CREATE INDEX IF NOT EXISTS ecu_profiles_key_idx ON ecu_profiles(ecu_key);

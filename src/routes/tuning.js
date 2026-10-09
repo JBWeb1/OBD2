@@ -8,6 +8,49 @@ const { parseId } = require('../lib/crud');
 const L = require('../lib/engine-learning');
 
 const router = express.Router();
+
+// Documentation vocabulary. These describe how an ECU is worked on; the app performs none of it.
+const ACCESS = ['obd', 'bench', 'boot', 'unknown'];
+const LEGAL = ['road', 'track', 'check'];
+
+// Own ECU notes, plus (when both shops opt in) an anonymised, aggregated reference built from other shops' notes.
+// ECU notes are about ECU TYPES, never about a customer or vehicle, so nothing identifying is pooled.
+async function loadEcuReference(tenantId, keys = null) {
+  const shared = await sharing(tenantId);
+  const own = (await db.query('SELECT * FROM ecu_profiles WHERE tenant_id = $1', [tenantId])).rows;
+  const others = shared
+    ? (await db.query(`SELECT ep.* FROM ecu_profiles ep JOIN tenants t ON t.id = ep.tenant_id WHERE ep.tenant_id <> $1 AND t.share_engine_data = true`, [tenantId])).rows
+    : [];
+  const want = keys && keys.length ? new Set(keys) : null;
+  const byKey = new Map();
+  const add = (r, mine) => {
+    if (want && !want.has(r.ecu_key)) return;
+    const g = byKey.get(r.ecu_key) || byKey.set(r.ecu_key, { ecu_key: r.ecu_key, ecu_name: r.ecu_name, make: r.make || null, shops: new Set(), entries: new Map() }).get(r.ecu_key);
+    if (mine) g.ecu_name = r.ecu_name;
+    g.shops.add(mine ? `me` : `t${r.tenant_id}`);
+    const sig = [r.access_method, (r.tool || '').toLowerCase().trim(), r.road_legal].join('|');
+    const e = g.entries.get(sig) || g.entries.set(sig, { access_method: r.access_method, tool: r.tool || null, road_legal: r.road_legal, security_note: r.security_note || null, notes: r.notes || null, mine: false, shops: 0 }).get(sig);
+    e.shops++; if (mine) { e.mine = true; e.security_note = r.security_note || e.security_note; e.notes = r.notes || e.notes; }
+  };
+  own.forEach((r) => add(r, true));
+  others.forEach((r) => add(r, false));
+  const reference = [...byKey.values()].map((g) => ({ ecu_key: g.ecu_key, ecu_name: g.ecu_name, make: g.make, shops: g.shops.size, entries: [...g.entries.values()] }))
+    .sort((a, b) => b.shops - a.shops || a.ecu_name.localeCompare(b.ecu_name));
+  return { shared, own, reference };
+}
+
+function cleanEcuProfile(body) {
+  const name = typeof body.ecu_name === 'string' ? body.ecu_name.trim().slice(0, 80) : '';
+  if (!name) throw new HttpError(400, 'ECU name is required');
+  const pick = (v, allowed, def) => (allowed.includes(v) ? v : def);
+  const txt = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
+  return {
+    ecu_name: name, ecu_key: L.ecuKey(name), make: txt(body.make, 60),
+    access_method: pick(body.access_method, ACCESS, 'unknown'), tool: txt(body.tool, 60),
+    security_note: txt(body.security_note, 400), road_legal: pick(body.road_legal, LEGAL, 'check'), notes: txt(body.notes, 2000),
+  };
+}
+
 const iso = (d) => (d instanceof Date ? d.toISOString() : String(d));
 const ymd = (d) => iso(d).slice(0, 10);
 
@@ -105,7 +148,39 @@ router.get('/vehicle/:id', wrap(async (req, res) => {
       knownForEngine: calibrations,
     },
     pulls: mine.rows.filter((s) => s.kind === 'pull' && s.summary).map((s) => ({ id: s.id, at: s.started_at, peaks: L.pullPeaks(s.summary) })),
+    ecu: await (async () => {
+      const names = (ecu && ecu.ecu_info.names) || [];
+      const keys = names.map(L.ecuKey).filter(Boolean);
+      const ref = await loadEcuReference(t, keys);
+      return { names, reference: ref.reference, shared: ref.shared, documented: ref.own.some((o) => keys.includes(o.ecu_key)) };
+    })(),
   });
+}));
+
+// --- ECU reference library (documentation only; performs no unlock, flash or bypass) ---
+router.get('/ecu', wrap(async (req, res) => {
+  const ref = await loadEcuReference(req.user.tenantId);
+  res.json({ ...ref, access: ACCESS, legal: LEGAL });
+}));
+
+// Create or update this workshop's note for an ECU type (one per ECU name per shop).
+router.post('/ecu', wrap(async (req, res) => {
+  const v = cleanEcuProfile(req.body || {});
+  const { rows } = await db.query(
+    `INSERT INTO ecu_profiles (tenant_id, ecu_name, ecu_key, make, access_method, tool, security_note, road_legal, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (tenant_id, ecu_key) DO UPDATE SET
+       ecu_name = EXCLUDED.ecu_name, make = EXCLUDED.make, access_method = EXCLUDED.access_method, tool = EXCLUDED.tool,
+       security_note = EXCLUDED.security_note, road_legal = EXCLUDED.road_legal, notes = EXCLUDED.notes, updated_at = now()
+     RETURNING *`,
+    [req.user.tenantId, v.ecu_name, v.ecu_key, v.make, v.access_method, v.tool, v.security_note, v.road_legal, v.notes]);
+  res.status(201).json(rows[0]);
+}));
+
+router.delete('/ecu/:id', wrap(async (req, res) => {
+  const { rowCount } = await db.query('DELETE FROM ecu_profiles WHERE id = $1 AND tenant_id = $2', [parseId(req.params.id), req.user.tenantId]);
+  if (!rowCount) throw new HttpError(404, 'Not found');
+  res.status(204).end();
 }));
 
 // Virtual dyno and warnings for one pull.

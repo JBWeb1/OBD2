@@ -586,7 +586,7 @@ views.tune = async (el) => {
 async function loadTune() {
   const vid = Number($('#tune-vehicle') && $('#tune-vehicle').value); const box = $('#tune-body'); if (!box) return;
   if (!vid) { box.innerHTML = '<div class="empty">Pick a vehicle to see its tuning picture.</div>'; return; }
-  const r = await api('/tuning/vehicle/' + vid);
+  const r = await api('/tuning/vehicle/' + vid); loadTune.data = r;
   const verdict = { ready: ['b-green', 'Ready to tune'], not_ready: ['b-red', 'Not ready — fix these first'], incomplete: ['b-amber', 'Not enough data yet'] }[r.readiness.verdict];
   const eng = r.engine;
   const sw = r.software;
@@ -604,6 +604,12 @@ async function loadTune() {
     ${r.health ? `<div class="page-sub" style="margin-bottom:6px">Last live scan ${day(r.health.at)} compared with other ${esc(eng.label)} engines${eng.shared ? ' (including shared data)' : ''}. "Typical" is the middle 80% of what has been seen.</div>
       ${table(['Parameter', 'This car (average)', 'Typical for this engine', 'Status'], r.health.vsEngine.map((c) => `<tr><td>${esc(c.name)}</td><td>${fmt(c.value)} ${esc(c.unit)}</td><td>${c.low == null ? '—' : `${fmt(c.low)} – ${fmt(c.high)} ${esc(c.unit)}`} <span style="color:var(--muted)">(${c.basedOn})</span></td><td>${statusBadge(c.status)}</td></tr>`), 'No comparable data yet.')}`
       : '<div class="empty">No live scan for this car yet. Run one from the Live scanner with the engine warm.</div>'}</div>
+  <div class="card" style="margin-bottom:12px"><div class="card-title">ECU tuning notes ${r.ecu.shared ? '<span class="badge b-green">shared library on</span>' : '<span class="badge b-blue">your workshop</span>'} <button class="btn sm" data-act="ecu-note">${r.ecu.documented ? 'Edit note' : '+ Add note'}</button></div>
+    <div class="page-sub" style="margin-bottom:8px">Reference only — records how an ECU type is read/written and whether a tune is road-legal. It does <b>not</b> unlock, flash or modify any ECU; flashing needs a licensed tool.</div>
+    ${r.ecu.names.length ? `<div class="page-sub" style="margin-bottom:6px">ECU read on this car: ${r.ecu.names.map(esc).join(', ')}</div>` : '<div class="page-sub" style="margin-bottom:6px">Read the ECU software (button above) to match this car to your notes.</div>'}
+    ${r.ecu.reference.length ? r.ecu.reference.map((g) => `<div style="margin-top:8px"><b>${esc(g.ecu_name)}</b>${g.make ? ' · ' + esc(g.make) : ''} <span class="badge b-blue">${g.shops} shop${g.shops === 1 ? '' : 's'}</span>
+      ${table(['Access', 'Tool', 'Road-legal', 'Notes', ''], g.entries.map((e) => `<tr><td>${accessLabel(e.access_method)}</td><td>${esc(e.tool || '—')}</td><td>${legalBadge(e.road_legal)}</td><td>${esc(e.security_note || e.notes || '—')}</td><td>${e.mine ? '<span class="badge b-green">yours</span>' : ''}</td></tr>`))}</div>`).join('')
+      : '<div class="empty">No notes for this ECU yet. Add one so your team — and, if you opt in to the shared library, other workshops — know how it is tuned.</div>'}</div>
   <div class="card"><div class="card-title">Pulls (full-throttle runs) <button class="btn sm" data-act="pull-compare">Compare ticked</button></div>
     ${r.pulls.length ? table(['', 'Date', 'Est. power*', 'Peak airflow', 'Peak boost', 'Peak timing', 'Peak IAT', 'Peak RPM', ''], r.pulls.map((p) => `<tr><td><input type="checkbox" data-pull="${p.id}"></td><td>${day(p.at)} ${esc(String(p.at).slice(11, 16))}</td><td><b>${fmt(p.peaks.estKw)}</b> kW</td><td>${fmt(p.peaks.mafGs)} g/s</td><td>${fmt(p.peaks.boostBar)} bar</td><td>${fmt(p.peaks.timingDeg)}°</td><td>${fmt(p.peaks.iatC)} °C</td><td>${fmt(p.peaks.rpm)}</td><td><button class="btn sm" data-act="pull-dyno" data-arg="${p.id}">Dyno &amp; checks</button></td></tr>`))
       + '<div class="page-sub" style="margin-top:6px">* Estimated from peak airflow (petrol engines, about ±15%). Best used to compare the same car before and after a change, not as a dyno figure.</div>'
@@ -611,6 +617,19 @@ async function loadTune() {
     <div id="pull-dyno-out"></div><div id="pull-compare-out"></div></div>`;
 }
 
+const accessLabel = (a) => ({ obd: 'OBD port', bench: 'Bench', boot: 'Boot mode', unknown: 'Unknown' }[a] || esc(a));
+const legalBadge = (l) => ({ road: '<span class="badge b-green">road-legal</span>', track: '<span class="badge b-amber">track only</span>', check: '<span class="badge b-blue">check legality</span>' }[l] || esc(l));
+function ecuNoteForm(v = {}) {
+  const sel = (name, opts, cur) => `<select name="${name}">${opts.map(([val, lbl]) => `<option value="${val}"${val === cur ? ' selected' : ''}>${lbl}</option>`).join('')}</select>`;
+  return `<div class="field"><label>ECU name</label><input name="ecu_name" value="${esc(v.ecu_name || '')}" placeholder="e.g. Bosch MED17.5.5" required></div>
+    <div class="grid-2"><div class="field"><label>Make (optional)</label><input name="make" value="${esc(v.make || '')}"></div>
+    <div class="field"><label>Access method</label>${sel('access_method', [['unknown', 'Unknown'], ['obd', 'OBD port'], ['bench', 'Bench'], ['boot', 'Boot mode']], v.access_method || 'unknown')}</div></div>
+    <div class="grid-2"><div class="field"><label>Tool used (optional)</label><input name="tool" value="${esc(v.tool || '')}" placeholder="e.g. KESS3, Autotuner"></div>
+    <div class="field"><label>Road-legal</label>${sel('road_legal', [['check', 'Check legality'], ['road', 'Road-legal'], ['track', 'Track only']], v.road_legal || 'check')}</div></div>
+    <div class="field"><label>Security / access note (optional)</label><input name="security_note" value="${esc(v.security_note || '')}" placeholder="e.g. OBD locked from MY2018 — bench only"></div>
+    <div class="field"><label>Notes (optional)</label><textarea name="notes" rows="3">${esc(v.notes || '')}</textarea></div>
+    <div class="page-sub">Your reference only. Do not record anything that bypasses manufacturer security or defeats emissions equipment.</div>`;
+}
 function dynoChart(id, curves) {
   drawChart($(id), curves.map((c) => ({ label: c.label, points: c.curve.filter((x) => x.kw != null).map((x) => ({ t: x.rpm, v: x.kw })) })), 'kW', { xUnit: 'rpm' });
 }
@@ -837,6 +856,16 @@ Object.assign(actions, {
   }),
   'pull-start': () => { if (pull.running && !pull.recording) { pull.recording = true; pull.started = Date.now(); } },
   'pull-stop': guard(async () => { if (!pull.running) return; if (pull.recording) await finishPull(); else { pull.running = false; pull.armed = false; } renderPull(); }),
+  'ecu-note': guard(async () => {
+    const r = loadTune.data || {}; const ecu = r.ecu || { names: [], reference: [] };
+    const name = ecu.names[0] || '';
+    const grp = ecu.reference.find((g) => g.ecu_name === name) || ecu.reference.find((g) => g.entries.some((e) => e.mine));
+    const own = grp && grp.entries.find((e) => e.mine);
+    const prefill = own ? { ecu_name: grp.ecu_name, make: grp.make, access_method: own.access_method, tool: own.tool, road_legal: own.road_legal, security_note: own.security_note, notes: own.notes } : { ecu_name: name };
+    openModal('ECU tuning note', ecuNoteForm(prefill), guard(async (f) => {
+      await api('/tuning/ecu', { method: 'POST', body: f }); closeModal(); loadTune();
+    }));
+  }),
   'pull-dyno': guard(async (id) => {
     const d = await api('/tuning/pull/' + id);
     $('#pull-compare-out').innerHTML = '';
