@@ -63,3 +63,56 @@ test('DTC byte decoding covers all four systems', () => {
   assert.equal(ELM327.decodeDtcBytes('C100'), 'U0100');
   assert.equal(ELM327.decodeDtcBytes('0000'), null);
 });
+
+test('supported PIDs beyond 0x20 are discovered (0120/0140) and merged across ECUs', async () => {
+  fakeAdapter({
+    ATZ: 'ELM327 v1.5', ATE0: 'OK', ATL0: 'OK', ATS0: 'OK', ATH0: 'OK', ATAT1: 'OK', ATSP0: 'OK',
+    // engine ECU: 01,03-07,0C,0D,0F,10,20 ; transmission ECU: 0B
+    '0100': '4100BE1FA013\n4100002000 00',
+    '0120': '41208007B011', // 21, 2E, 2F, 30, 31, 33, 34, 3C, 40 (40 = next range exists)
+    '0140': '414040000000', // 42 (battery voltage)
+    ATDP: 'ISO 15765-4 (CAN 11/500)',
+  });
+  const e = new ELM327();
+  await e.connect();
+  for (const pid of ['01', '0C', '0D', '0B', '20', '21', '2F', '40', '42']) assert.ok(e.supported.has(pid), `PID ${pid} supported`);
+  assert.ok(!e.supported.has('60'), '0160 not requested when PID 40 says the range ends');
+  await e.disconnect();
+});
+
+test('multi-frame CAN DTC reply (more than two codes) is fully decoded', async () => {
+  fakeAdapter({
+    ATZ: 'ELM327 v1.5', ATE0: 'OK', ATL0: 'OK', ATS0: 'OK', ATH0: 'OK', ATAT1: 'OK', ATSP0: 'OK',
+    '0100': '4100BE1FA810', ATDP: 'ISO 15765-4 (CAN 11/500)',
+    // 5 codes: 43 05 | 0104 0301 0420 0171 C100 -> 12 bytes = 0x00C
+    '03': '00C\n0:43050104030104\n1:200171C1000000',
+    '04': 'NO DATA',
+  });
+  const e = new ELM327();
+  await e.connect();
+  assert.deepEqual(await e.readStoredDtcs(), ['P0104', 'P0301', 'P0420', 'P0171', 'U0100']);
+  assert.equal(await e.clearDtcs(), false, 'NO DATA is not a confirmed clear');
+  await e.disconnect();
+});
+
+test('K-line (ISO 9141) DTC replies: one line per frame, zero padding ignored', async () => {
+  fakeAdapter({
+    ATZ: 'ELM327 v1.5', ATE0: 'OK', ATL0: 'OK', ATS0: 'OK', ATH0: 'OK', ATAT1: 'OK', ATSP0: 'OK',
+    '0100': 'BUS INIT: ...OK\n4100BE1FA810', ATDP: 'ISO 9141-2',
+    '03': '43010403010420\n43017100000000',
+    '0902': '490201000000 57\n49020256575A5A\n4902035A36525A\n49020448593132\n49020533343536'.replace(/ /g, ''),
+  });
+  const e = new ELM327();
+  await e.connect();
+  assert.equal(e.isCan, false);
+  assert.deepEqual(await e.readStoredDtcs(), ['P0104', 'P0301', 'P0420', 'P0171']);
+  assert.equal(await e.readVin(), 'WVWZZZ6RZHY123456');
+  await e.disconnect();
+});
+
+test('message splitter joins numbered CAN frames, including hex frame indexes past 9', () => {
+  const frames = ['0:490201575657'].concat(Array.from({ length: 11 }, (_, i) => `${(i + 1).toString(16).toUpperCase()}:41414141414141`));
+  const out = ELM327.messages('050\n' + frames.join('\n'));
+  assert.equal(out.length, 1);
+  assert.equal(out[0].length, 0x50 * 2);
+});

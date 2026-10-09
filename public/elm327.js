@@ -32,6 +32,22 @@
   const ERRORS = ['NO DATA', 'UNABLE TO CONNECT', 'BUS INIT', 'CAN ERROR', 'BUFFER FULL', 'BUS BUSY', 'FB ERROR', 'DATA ERROR', 'STOPPED', 'ERROR', '?'];
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // Splits an adapter reply into complete messages (hex strings, no spaces). CAN replies longer than one frame arrive as
+  // a length line ("00A") followed by numbered frames ("0:...", "1:...", ... "F:", "0:" ...); those are joined back into
+  // one message. Every other line (single frames, K-line replies, one line per ECU) is its own message.
+  function messages(text) {
+    const out = []; let cur = null;
+    for (const raw of String(text).split('\n')) {
+      const line = raw.trim().toUpperCase();
+      if (/^[0-9A-F]{3}$/.test(line)) { cur = { hex: '', len: parseInt(line, 16) }; out.push(cur); continue; }
+      const frame = /^[0-9A-F]:(.*)$/.exec(line);
+      if (frame && cur) { cur.hex += frame[1].replace(/[^0-9A-F]/g, ''); continue; }
+      const hex = (frame ? frame[1] : line).replace(/[^0-9A-F]/g, '');
+      if (hex) { cur = null; out.push({ hex }); }
+    }
+    return out.map((m) => (m.len ? m.hex.slice(0, m.len * 2) : m.hex));
+  }
+
   function decodeDtcBytes(hex2) {
     const letters = ['P', 'C', 'B', 'U'];
     const a = parseInt(hex2.slice(0, 2), 16), b = hex2.slice(2, 4);
@@ -67,7 +83,7 @@
       if (!/4100/.test(r.replace(/\s/g, ''))) {
         throw new Error(this._explain(r) || 'The adapter is connected but the car did not answer. Turn the ignition on and check the protocol.');
       }
-      this.supported = this._parseSupported(r);
+      this.supported = await this._readSupported(r);
       this.protocol = (await this.send('ATDP')).replace(/^AUTO,\s*/i, '').trim();
       this.isCan = /CAN/i.test(this.protocol);
       return { protocol: this.protocol };
@@ -125,15 +141,27 @@
       return '';
     }
 
-    _parseSupported(text) {
-      const set = new Set();
-      const hex = text.replace(/[^0-9A-F]/gi, '').toUpperCase();
-      const i = hex.indexOf('4100');
-      if (i < 0) return set;
-      const bytes = hex.slice(i + 4, i + 12);
-      for (let n = 0; n < 32; n++) {
-        const byte = parseInt(bytes.substr(Math.floor(n / 8) * 2, 2), 16);
-        if (!Number.isNaN(byte) && (byte >> (7 - (n % 8))) & 1) set.add((n + 1).toString(16).toUpperCase().padStart(2, '0'));
+    // Bitmask reply to 01 00 / 01 20 / 01 40 ... Each answer covers the next 32 PIDs; with several ECUs the masks are merged.
+    _parseSupported(text, base = 0, set = new Set()) {
+      const head = '41' + base.toString(16).toUpperCase().padStart(2, '0');
+      for (const hex of messages(text)) {
+        if (!hex.startsWith(head) || hex.length < 12) continue;
+        const bytes = hex.slice(4, 12);
+        for (let n = 0; n < 32; n++) {
+          const byte = parseInt(bytes.substr(Math.floor(n / 8) * 2, 2), 16);
+          if ((byte >> (7 - (n % 8))) & 1) set.add((base + n + 1).toString(16).toUpperCase().padStart(2, '0'));
+        }
+      }
+      return set;
+    }
+
+    // 01 00 only lists PIDs 01-20. PID 20/40/60 being "supported" means the next range exists, so ask for it too —
+    // otherwise PIDs such as 2F (fuel level), 42 (battery voltage) and 5C (oil temperature) would never be polled.
+    async _readSupported(first) {
+      const set = this._parseSupported(first, 0);
+      for (let base = 0x20; base <= 0xA0 && set.has(base.toString(16).toUpperCase().padStart(2, '0')); base += 0x20) {
+        const cmd = '01' + base.toString(16).toUpperCase().padStart(2, '0');
+        this._parseSupported(await this.send(cmd, 4000), base, set);
       }
       return set;
     }
@@ -144,8 +172,7 @@
       const decode = DECODE[p];
       if (!decode) return null;
       const text = await this.send('01' + p);
-      for (const line of text.split('\n')) {
-        const hex = line.replace(/^\d:/, '').replace(/[^0-9A-F]/gi, '').toUpperCase();
+      for (const hex of messages(text)) {
         if (hex.startsWith('41' + p)) {
           const data = hex.slice(4).match(/.{2}/g)?.map((h) => parseInt(h, 16)) || [];
           if (data.length < (BYTES[p] || 1)) return null;
@@ -159,11 +186,13 @@
       const text = await this.send(cmd, 6000);
       if (/NO DATA/i.test(text) && !new RegExp(respHeader, 'i').test(text.replace(/\s/g, ''))) return [];
       const codes = [];
-      for (const line of text.split('\n')) {
-        let hex = line.replace(/^\d:/, '').replace(/[^0-9A-F]/gi, '').toUpperCase();
+      for (let hex of messages(text)) {
         if (!hex.startsWith(respHeader)) continue;
         hex = hex.slice(respHeader.length);
-        if (this.isCan) hex = hex.slice(2); // CAN: count byte follows the header
+        if (this.isCan) { // CAN: a count byte follows the header; when it is set, anything past count codes is padding
+          const count = parseInt(hex.slice(0, 2), 16) || 0;
+          hex = count ? hex.slice(2, 2 + count * 4) : hex.slice(2);
+        }
         for (let i = 0; i + 4 <= hex.length; i += 4) {
           const c = decodeDtcBytes(hex.slice(i, i + 4));
           if (c) codes.push(c);
@@ -177,7 +206,7 @@
 
     async clearDtcs() {
       const t = await this.send('04', 6000);
-      return /44/.test(t.replace(/\s/g, ''));
+      return messages(t).some((hex) => hex.startsWith('44'));
     }
 
     readPermanentDtcs() { return this._dtcs('0A', '4A'); }
@@ -185,8 +214,7 @@
     // Mode 01 PID 01: MIL state, stored-code count and emissions readiness monitors.
     async readReadiness() {
       const text = await this.send('0101', 6000);
-      for (const line of text.split('\n')) {
-        const hex = line.replace(/^\d:/, '').replace(/[^0-9A-F]/gi, '').toUpperCase();
+      for (const hex of messages(text)) {
         if (!hex.startsWith('4101') || hex.length < 12) continue;
         const [A, B, C, D] = hex.slice(4, 12).match(/.{2}/g).map((h) => parseInt(h, 16));
         const diesel = !!(B & 0x08);
@@ -209,15 +237,13 @@
     async readFreezeFrame() {
       const out = { dtc: null, values: {} };
       const t = await this.send('020200', 4000);
-      for (const line of t.split('\n')) {
-        const hex = line.replace(/^\d:/, '').replace(/[^0-9A-F]/gi, '').toUpperCase();
-        if (hex.startsWith('420200')) out.dtc = decodeDtcBytes(hex.slice(6, 10));
+      for (const hex of messages(t)) {
+        if (hex.startsWith('420200') && !out.dtc) out.dtc = decodeDtcBytes(hex.slice(6, 10));
       }
       for (const pid of ['04', '05', '06', '07', '0B', '0C', '0D', '0E', '0F', '11']) {
         const r = await this.send('02' + pid + '00', 3000);
-        for (const line of r.split('\n')) {
-          const hex = line.replace(/^\d:/, '').replace(/[^0-9A-F]/gi, '').toUpperCase();
-          if (hex.startsWith('42' + pid + '00')) {
+        for (const hex of messages(r)) {
+          if (hex.startsWith('42' + pid + '00') && !(pid in out.values)) {
             const data = (hex.slice(6).match(/.{2}/g) || []).map((h) => parseInt(h, 16));
             if (data.length >= (BYTES[pid] || 1)) out.values[pid] = DECODE[pid](data);
           }
@@ -229,20 +255,12 @@
     async readVin() {
       const text = await this.send('0902', 6000);
       let hex = '';
-      const lines = text.split('\n');
       if (this.isCan) {
-        for (const line of lines) {
-          if (!line.includes(':') && /^[0-9A-F]{3}$/i.test(line)) continue; // CAN length line
-          hex += line.replace(/^\d:/, '').replace(/[^0-9A-F]/gi, '').toUpperCase();
-        }
-        const i = hex.indexOf('4902');
-        if (i < 0) return null;
-        hex = hex.slice(i + 6);
+        const msg = messages(text).find((m) => m.startsWith('4902'));
+        if (!msg) return null;
+        hex = msg.slice(6); // 49 02 + number-of-items byte
       } else {
-        for (const line of lines) {
-          const h = line.replace(/[^0-9A-F]/gi, '').toUpperCase();
-          if (h.startsWith('4902')) hex += h.slice(6);
-        }
+        for (const h of messages(text)) if (h.startsWith('4902')) hex += h.slice(6); // 49 02 + sequence byte
       }
       const vin = (hex.match(/.{2}/g) || []).map((h) => parseInt(h, 16)).filter((n) => n > 32 && n < 127)
         .map((n) => String.fromCharCode(n)).join('').replace(/[^A-HJ-NPR-Z0-9]/g, '');
@@ -253,5 +271,6 @@
   root.ELM327 = ELM327;
   root.ELM327.decodeDtcBytes = decodeDtcBytes; // exported for tests
   root.ELM327.DECODE = DECODE;
+  root.ELM327.messages = messages;
   if (typeof module !== 'undefined') module.exports = ELM327;
 })(typeof window !== 'undefined' ? window : globalThis);
