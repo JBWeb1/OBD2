@@ -56,6 +56,16 @@ Decode the make, model year and plant from the VIN (WMI + year character) when a
 ### 6. Onboarding (S)
 A first-run checklist (shop details → add a vehicle → connect adapter → first scan → first invoice), a demo vehicle with sample data, and a "which adapter should I buy" page. Trials only convert when the shop reaches a successful first scan.
 
+### 7. Make the tuning section the best in its class (ongoing)
+The Tuning section (self-learning engine profiles, ECU software identification, pull recorder, virtual dyno, knock and lean warnings) is the feature competitors' generic scan tools don't have. Next steps, in order of value:
+- **Get shops to opt in to shared learning.** Every engine is learned faster with more cars; this is the network effect, so offer something for it (for example, a discount).
+- **Wideband AFR input:** support a serial wideband controller (most output a simple serial stream) alongside the ELM327, giving real air-fuel ratio on pulls instead of commanded lambda.
+- **Speed-based power** (from acceleration and vehicle mass) as a second estimate next to airflow, and for diesels and speed-density engines.
+- **Weather correction** (baro and intake temperature, SAE J1349) so pulls on different days compare fairly.
+- **Pull consistency score:** warn when gear, start rpm or temperatures differ between a before and an after pull.
+- **Per-file results:** once software versions are labelled, show the average gain other cars got from the same tuned file.
+- **Flashing:** only via a partnership with an established flash-tool maker. Don't build it on an ELM327.
+
 ## Phase 2: retention and a moat (months 3–9)
 
 | Item | Why it matters | Effort |

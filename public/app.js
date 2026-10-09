@@ -531,7 +531,8 @@ async function resizeToDataUrl(file, maxSide, type, quality) {
 
 // ----- chart -----
 const COLORS = ['#60A5FA', '#10B981', '#F59E0B', '#EF4444'];
-function drawChart(canvas, series, unit) {
+// x defaults to time in ms from 0; pass { xUnit: 'rpm' } to plot against another quantity from its own minimum.
+function drawChart(canvas, series, unit, opts = {}) {
   if (!canvas) return;
   const dpr = window.devicePixelRatio || 1; const w = canvas.clientWidth, h = canvas.clientHeight;
   canvas.width = w * dpr; canvas.height = h * dpr;
@@ -541,11 +542,12 @@ function drawChart(canvas, series, unit) {
   if (pts.length < 2) { g.fillStyle = '#64748B'; g.fillText('No data to graph yet', 14, 24); return; }
   const L = 46, R = 12, T = 22, B = 22;
   let minV = Math.min(...pts.map((p) => p.v)), maxV = Math.max(...pts.map((p) => p.v)); if (minV === maxV) { minV -= 1; maxV += 1; }
-  const maxT = Math.max(...pts.map((p) => p.t)) || 1;
-  const X = (t) => L + (t / maxT) * (w - L - R), Y = (v) => T + (1 - (v - minV) / (maxV - minV)) * (h - T - B);
+  const maxT = Math.max(...pts.map((p) => p.t)) || 1; const minT = opts.xUnit ? Math.min(...pts.map((p) => p.t)) : 0;
+  const X = (t) => L + ((t - minT) / (maxT - minT || 1)) * (w - L - R), Y = (v) => T + (1 - (v - minV) / (maxV - minV)) * (h - T - B);
   g.strokeStyle = 'rgba(255,255,255,.07)'; g.fillStyle = '#64748B'; g.lineWidth = 1;
   for (let i = 0; i <= 4; i++) { const v = minV + ((maxV - minV) * i) / 4, y = Y(v); g.beginPath(); g.moveTo(L, y); g.lineTo(w - R, y); g.stroke(); g.fillText(Math.abs(v) >= 100 ? Math.round(v) : v.toFixed(1), 4, y + 3); }
-  g.fillText(`${(maxT / 1000).toFixed(0)} s`, w - R - 34, h - 6); g.fillText('0', L, h - 6);
+  if (opts.xUnit) { g.fillText(`${Math.round(maxT)} ${opts.xUnit}`, w - R - 70, h - 6); g.fillText(`${Math.round(minT)}`, L, h - 6); }
+  else { g.fillText(`${(maxT / 1000).toFixed(0)} s`, w - R - 34, h - 6); g.fillText('0', L, h - 6); }
   series.forEach((s, n) => {
     g.strokeStyle = COLORS[n % COLORS.length]; g.lineWidth = 1.6; g.beginPath();
     s.points.forEach((p, i) => (i ? g.lineTo(X(p.t), Y(p.v)) : g.moveTo(X(p.t), Y(p.v)))); g.stroke();
@@ -603,10 +605,14 @@ async function loadTune() {
       ${table(['Parameter', 'This car (average)', 'Typical for this engine', 'Status'], r.health.vsEngine.map((c) => `<tr><td>${esc(c.name)}</td><td>${fmt(c.value)} ${esc(c.unit)}</td><td>${c.low == null ? '—' : `${fmt(c.low)} – ${fmt(c.high)} ${esc(c.unit)}`} <span style="color:var(--muted)">(${c.basedOn})</span></td><td>${statusBadge(c.status)}</td></tr>`), 'No comparable data yet.')}`
       : '<div class="empty">No live scan for this car yet. Run one from the Live scanner with the engine warm.</div>'}</div>
   <div class="card"><div class="card-title">Pulls (full-throttle runs) <button class="btn sm" data-act="pull-compare">Compare ticked</button></div>
-    ${r.pulls.length ? table(['', 'Date', 'Est. power*', 'Peak airflow', 'Peak boost', 'Peak timing', 'Peak IAT', 'Peak RPM'], r.pulls.map((p) => `<tr><td><input type="checkbox" data-pull="${p.id}"></td><td>${day(p.at)} ${esc(String(p.at).slice(11, 16))}</td><td><b>${fmt(p.peaks.estKw)}</b> kW</td><td>${fmt(p.peaks.mafGs)} g/s</td><td>${fmt(p.peaks.boostBar)} bar</td><td>${fmt(p.peaks.timingDeg)}°</td><td>${fmt(p.peaks.iatC)} °C</td><td>${fmt(p.peaks.rpm)}</td></tr>`))
+    ${r.pulls.length ? table(['', 'Date', 'Est. power*', 'Peak airflow', 'Peak boost', 'Peak timing', 'Peak IAT', 'Peak RPM', ''], r.pulls.map((p) => `<tr><td><input type="checkbox" data-pull="${p.id}"></td><td>${day(p.at)} ${esc(String(p.at).slice(11, 16))}</td><td><b>${fmt(p.peaks.estKw)}</b> kW</td><td>${fmt(p.peaks.mafGs)} g/s</td><td>${fmt(p.peaks.boostBar)} bar</td><td>${fmt(p.peaks.timingDeg)}°</td><td>${fmt(p.peaks.iatC)} °C</td><td>${fmt(p.peaks.rpm)}</td><td><button class="btn sm" data-act="pull-dyno" data-arg="${p.id}">Dyno &amp; checks</button></td></tr>`))
       + '<div class="page-sub" style="margin-top:6px">* Estimated from peak airflow (petrol engines, about ±15%). Best used to compare the same car before and after a change, not as a dyno figure.</div>'
       : '<div class="empty">No pulls recorded. Record one before and one after a tune to see what changed.</div>'}
-    <div id="pull-compare-out"></div></div>`;
+    <div id="pull-dyno-out"></div><div id="pull-compare-out"></div></div>`;
+}
+
+function dynoChart(id, curves) {
+  drawChart($(id), curves.map((c) => ({ label: c.label, points: c.curve.filter((x) => x.kw != null).map((x) => ({ t: x.rpm, v: x.kw })) })), 'kW', { xUnit: 'rpm' });
 }
 
 function renderPull() {
@@ -831,12 +837,24 @@ Object.assign(actions, {
   }),
   'pull-start': () => { if (pull.running && !pull.recording) { pull.recording = true; pull.started = Date.now(); } },
   'pull-stop': guard(async () => { if (!pull.running) return; if (pull.recording) await finishPull(); else { pull.running = false; pull.armed = false; } renderPull(); }),
+  'pull-dyno': guard(async (id) => {
+    const d = await api('/tuning/pull/' + id);
+    $('#pull-compare-out').innerHTML = '';
+    $('#pull-dyno-out').innerHTML = `<div style="margin-top:12px"><b>Pull #${d.id} — virtual dyno</b> ${d.peak ? `<span class="badge b-green">${d.peak.kw} kW @ ${d.peak.kwRpm} rpm</span> <span class="badge b-blue">${d.peak.nm} Nm @ ${d.peak.nmRpm} rpm</span>` : ''} <span class="page-sub">${d.rpmFrom ?? '—'}–${d.rpmTo ?? '—'} rpm · estimated from airflow</span>
+      <canvas class="chart" id="dyno-chart" style="margin-top:8px"></canvas>
+      ${d.warnings.length ? d.warnings.map((w) => `<div class="annotation" style="margin-top:6px">${w.level === 'fail' ? '⛔' : w.level === 'warn' ? '⚠' : 'ℹ'} ${esc(w.text)}</div>`).join('') : '<div class="page-sub" style="margin-top:6px">✓ No knock, lean-mixture or heat-soak signs in this pull.</div>'}
+      ${table(['RPM', 'Est. power', 'Est. torque', 'Boost', 'Timing', 'λ cmd'], d.curve.filter((_, i) => i % 2 === 0).map((c) => `<tr><td>${c.rpm}</td><td>${fmt(c.kw)} kW</td><td>${fmt(c.nm)} Nm</td><td>${fmt(c.boostBar)} bar</td><td>${fmt(c.timing)}°</td><td>${fmt(c.lambda)}</td></tr>`))}</div>`;
+    dynoChart('#dyno-chart', [{ label: `#${d.id}`, curve: d.curve }]);
+  }),
   'pull-compare': guard(async () => {
     const ids = [...document.querySelectorAll('[data-pull]:checked')].map((c) => Number(c.dataset.pull)).sort((a, b) => a - b);
     if (ids.length !== 2) return toast('Tick exactly two pulls (before and after).', 'error');
     const c = await api(`/tuning/compare?before=${ids[0]}&after=${ids[1]}`);
+    $('#pull-dyno-out').innerHTML = '';
     $('#pull-compare-out').innerHTML = `<div style="margin-top:12px"><b>Before #${c.before.id} (${day(c.before.at)}) → after #${c.after.id} (${day(c.after.at)})</b>
+      <canvas class="chart" id="dyno-compare" style="margin-top:8px"></canvas>
       ${table(['', 'Before', 'After', 'Change'], c.rows.map((r) => `<tr><td>${esc(r.label)}</td><td>${fmt(r.before)} ${esc(r.unit)}</td><td>${fmt(r.after)} ${esc(r.unit)}</td><td>${r.change == null ? '—' : `<span class="badge ${r.change >= 0 ? 'b-green' : 'b-red'}">${r.change >= 0 ? '+' : ''}${fmt(r.change)} ${esc(r.unit)}${r.pct != null ? ` (${r.pct >= 0 ? '+' : ''}${r.pct}%)` : ''}</span>`}</td></tr>`))}</div>`;
+    dynoChart('#dyno-compare', [{ label: `Before #${c.before.id}`, curve: c.before.curve || [] }, { label: `After #${c.after.id}`, curve: c.after.curve || [] }]);
   }),
   'term-save': () => saveBlob(new Blob([termLog.map(([d, t]) => `${d} ${t}`).join('\n')], { type: 'text/plain' }), 'obd-terminal-log.txt'),
   'job-new': guard(async () => openModal('New job', await jobForm(), guard(async (f) => { await api('/jobs', { method: 'POST', body: jobBody(f) }); closeModal(); go('jobs'); }))),

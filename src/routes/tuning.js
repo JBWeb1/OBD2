@@ -108,10 +108,17 @@ router.get('/vehicle/:id', wrap(async (req, res) => {
   });
 }));
 
+// Virtual dyno and warnings for one pull.
+router.get('/pull/:id', wrap(async (req, res) => {
+  const { rows } = await db.query(`SELECT id, vehicle_id, started_at, summary, samples FROM scan_sessions WHERE id = $1 AND tenant_id = $2 AND kind = 'pull'`, [parseId(req.params.id), req.user.tenantId]);
+  if (!rows[0]) throw new HttpError(404, 'Pull not found');
+  res.json({ id: rows[0].id, at: rows[0].started_at, peaks: L.pullPeaks(rows[0].summary), ...L.analysePull(rows[0].samples || [], rows[0].summary || {}) });
+}));
+
 // Before/after comparison of two of this workshop's pulls (or live scans).
 router.get('/compare', wrap(async (req, res) => {
   const a = parseId(req.query.before), b = parseId(req.query.after);
-  const { rows } = await db.query('SELECT id, started_at, summary FROM scan_sessions WHERE tenant_id = $1 AND id IN ($2, $3)', [req.user.tenantId, a, b]);
+  const { rows } = await db.query('SELECT id, started_at, summary, samples FROM scan_sessions WHERE tenant_id = $1 AND id IN ($2, $3)', [req.user.tenantId, a, b]);
   const before = rows.find((r) => r.id === a), after = rows.find((r) => r.id === b);
   if (!before || !after) throw new HttpError(404, 'Scan not found');
   res.json(L.comparePulls(before, after));

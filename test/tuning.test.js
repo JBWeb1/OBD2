@@ -160,3 +160,51 @@ test('API: shared learning is opt-in for both sides and only ever returns aggreg
   assert.equal(lib.find((e) => e.label.includes('1.6 MPI')).vehicles, 4);
   assert.equal((await ctx.call('GET', '/tuning/engines', { token: A })).body.engines.some((e) => e.label.includes('1.6 MPI')), false, 'A did not opt in');
 });
+
+// A synthetic 2,000 -> 6,000 rpm pull. `knockAt` pulls 5° of timing at that rpm; `lambda` is the commanded mixture.
+function pullSamples({ knockAt = null, lambda = 0.82, iatRise = 5, mafScale = 1 } = {}) {
+  const out = [];
+  for (let i = 0; i <= 40; i++) {
+    const rpm = 2000 + i * 100;
+    const timing = 8 + i * 0.25 - (knockAt && Math.abs(rpm - knockAt) < 50 ? 5 : 0);
+    out.push({ t: i * 150, '010C': rpm, '0110': (20 + i * 2.5) * mafScale, '010B': 220 - Math.max(0, i - 30) * 6, '010E': timing, '010F': 30 + (iatRise * i) / 40, '0144': lambda, '0111': 100 });
+  }
+  return out;
+}
+
+test('pull analysis: dyno curve, peak power/torque, knock, lean mixture, heat soak, boost taper', () => {
+  const ok = L.analysePull(pullSamples(), {});
+  assert.equal(ok.rpmFrom, 2200, 'first 300 ms (tip-in) skipped'); assert.equal(ok.rpmTo, 6000);
+  assert.ok(ok.curve.length >= 15);
+  assert.equal(ok.peak.kwRpm, 6000); assert.equal(ok.peak.kw, L.powerFromMaf(120));
+  assert.ok(ok.peak.nm > 0);
+  assert.ok(!ok.warnings.some((w) => w.level === 'fail'), JSON.stringify(ok.warnings));
+  assert.ok(ok.warnings.some((w) => /Boost falls/.test(w.text)), 'boost taper noticed');
+  const bad = L.analysePull(pullSamples({ knockAt: 4500, lambda: 1.0, iatRise: 20 }), {});
+  const knock = bad.warnings.find((w) => /knock/i.test(w.text));
+  assert.ok(knock); assert.equal(knock.knock[0].rpm, 4500);
+  assert.ok(bad.warnings.some((w) => /too lean/.test(w.text)));
+  assert.ok(bad.warnings.some((w) => /Intake air rose (19|20) /.test(w.text)));
+  assert.equal(L.analysePull([{ t: 0, '010C': 3000 }]).curve.length, 0);
+  // tip-in: the first reads happen before the throttle opened (high cruise timing, stale airflow) — not knock, not a peak
+  const tipIn = [{ t: 0, '010C': 1726, '0110': 100, '010E': 14 }, { t: 100, '010C': 1730, '0110': 30, '010E': 9 }, { t: 200, '010C': 1800, '0110': 32, '010E': 9 }, ...pullSamples().map((x) => ({ ...x, t: x.t + 300 }))];
+  const ti = L.analysePull(tipIn, {});
+  assert.ok(!ti.warnings.some((w) => /knock/i.test(w.text)), 'tip-in transient is not knock');
+  assert.equal(ti.peak.nmRpm > 2000, true, 'no bogus low-rpm torque peak from a stale airflow reading');
+  const lift = [...pullSamples(), { t: 6200, '010C': 1726, '0110': 100, '010E': 14, '0111': 20 }, { t: 6350, '010C': 1700, '0110': 90, '010E': 30, '0111': 15 }];
+  const lf = L.analysePull(lift, {});
+  assert.equal(lf.curve[0].rpm >= 2000, true, 'lift-off samples after the pull are not part of the curve');
+  assert.equal(lf.peak.nmRpm > 2000, true);
+});
+
+test('API: virtual dyno per pull and overlaid curves in the comparison', async () => {
+  const v = await car(A, '2.0 TFSI');
+  const mk = async (samples) => (await scan(A, { vehicle_id: v, kind: 'pull', summary: pull(Math.max(...samples.map((x) => x['0110'])), 220), samples })).body;
+  const b = await mk(pullSamples()); const a = await mk(pullSamples({ mafScale: 1.15 }));
+  const dyno = (await ctx.call('GET', `/tuning/pull/${b.id}`, { token: A })).body;
+  assert.equal(dyno.peak.kwRpm, 6000); assert.ok(dyno.curve.length > 10);
+  assert.equal((await ctx.call('GET', `/tuning/pull/${b.id}`, { token: B })).status, 404);
+  const c = (await ctx.call('GET', `/tuning/compare?before=${b.id}&after=${a.id}`, { token: A })).body;
+  assert.ok(c.after.peak.kw > c.before.peak.kw);
+  assert.equal(c.before.curve.length, c.after.curve.length);
+});

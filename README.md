@@ -30,6 +30,7 @@ Serve it behind HTTPS (Web Serial needs a secure context except on localhost) an
 
 ## What's included
 Diagnostics: 48 standard live sensors (pick which to poll; up to 6 per request on CAN), automatic adapter reconnect, stored/pending/permanent fault codes, readiness monitors + MIL, freeze frame, on-board monitor test results (Mode 06, CAN), VIN, raw terminal, scan history with graphs and two-scan overlay.
+Tuning: self-learning engine profiles for every make/model/engine you scan, ECU software identification (calibration ID + checksum, learned as stock or tuned), tune-readiness check, full-throttle pull recorder with a virtual dyno (estimated power/torque curve), knock / lean-mixture / heat-soak / boost-taper warnings, before/after comparison, opt-in shared learning between workshops.
 Workshop: jobs board, customers, vehicles (next-service dates), remap log, inspections with photos, parts and stock (invoices deduct stock), quotes and invoices with PDF + email + customer payment links, vehicle history reports (PDF), service reminders by email/SMS/WhatsApp.
 Account: email verification, password reset, shop profile + logo, team, audit log, data export and account deletion, PayFast subscriptions.
 
@@ -47,6 +48,13 @@ Honest limits:
 - **Demo mode** is clearly labelled; its values are simulated, stored as `source=demo`, and don't count toward plan limits.
 - Cheap clone adapters (v2.1 etc.) are unreliable; use a genuine/known-good ELM327 or OBDLink.
 - The ELM327 driver is tested against a simulated adapter, **not yet against a physical car** — do a test on a real vehicle before selling.
+
+## Tuning section
+- **Learns every engine automatically.** Each live scan on a vehicle with make, model and engine filled in teaches the typical range of every sensor for that engine; pulls teach typical peaks. After 5 scans from 2+ cars, new cars are compared with their engine ("short-term trim high for this engine"). Nothing is hard-coded per model.
+- **Read ECU software** (Mode 09, read-only): calibration IDs, CVN checksums, ECU name and VIN. A version read before a logged remap is learned as *stock*, the new one after it as *tuned*, so later cars arriving on a known file are recognised. A software change with no remap logged is flagged.
+- **Record a pull:** arm it, go to full throttle on a dyno or closed road; it records from full throttle until lift-off. Each pull gets a virtual dyno curve and checks for knock (timing pulled back while rpm climbs), lean commanded mixture under boost, intake heat soak and boost taper. Tick two pulls to overlay before/after.
+- **Honest limits:** power and torque are *estimated from airflow* (petrol, about ±15%) — reliable for before/after on the same car, not a dyno replacement. Knock is inferred from timing retard (standard OBD2 has no knock-sensor PID). An ELM327 cannot read or write ECU map files; flashing needs a dedicated tool. Diesel and engines without a MAF sensor get peaks and warnings but no power estimate.
+- **Shared learning** (Settings → Engine learning) is opt-in on both sides and only ever returns aggregates — no customers, plates, VINs or vehicle records leave a workshop.
 
 ## Plans and billing
 | Plan | Price (ZAR/mo) | Live scans/month | Team members |
@@ -95,7 +103,7 @@ npm test                      # API, account, features, data + ELM327 driver tes
 TEST_DATABASE_URL=postgres://user@localhost/scratch npm test   # same suite on a real Postgres (throwaway schema per run)
 node test/dev-server.js &     # in-memory server on :3111
 node test/e2e.js              # headless-browser smoke test (needs playwright)
-node test/e2e-scanner.js      # scanner UI against a simulated ELM327: connect, live scan, cable pull + reconnect, codes, Mode 06
+node test/e2e-scanner.js      # scanner + tuning UI against a simulated ELM327: live scan, reconnect, codes, Mode 06, ECU read, pull + dyno
 ```
 
 ## Layout

@@ -20,7 +20,12 @@ function fakeSerial() {
     if (FIXED[cmd]) return FIXED[cmd];
     if (/^01([0-9A-F]{2})+$/.test(cmd)) {
       const pids = cmd.slice(2).match(/../g);
-      const parts = pids.filter((p) => VALUES[p] || p === '11').map((p) => p + (p === '11' ? window.__thr : VALUES[p]));
+      // under full throttle the simulated engine revs from 2,000 rpm and airflow rises with it
+      const wot = window.__thr === 'FF' ? (window.__wotAt = window.__wotAt || Date.now()) : (window.__wotAt = 0);
+      const rev = wot ? Math.min(1, (Date.now() - wot) / 1500) : null;
+      const h = (n, bytes) => Math.round(n).toString(16).toUpperCase().padStart(bytes * 2, '0');
+      const val = (p) => (p === '11' ? window.__thr : rev == null ? VALUES[p] : p === '0C' ? h((2000 + 4000 * rev) * 4, 2) : p === '10' ? h((30 + 90 * rev) * 100, 2) : p === '0E' ? h((10 + 12 * rev + 64) * 2, 1) : VALUES[p]);
+      const parts = pids.filter((p) => VALUES[p] || p === '11').map((p) => p + val(p));
       return parts.length ? '41' + parts.join('') : 'NO DATA';
     }
     return 'NO DATA';
@@ -101,10 +106,14 @@ function fakeSerial() {
   if (!(await p.locator('#tune-body td:has-text("A1B2C3D4")').count())) problems.push('CVN not shown');
   await p.click('[data-act=pull-arm]'); await p.waitForSelector('#pull-box :text("ARMED")');
   await p.evaluate(() => { window.__thr = 'FF'; }); await p.waitForSelector('#pull-box :text("RECORDING")');
-  await p.waitForTimeout(800); await p.evaluate(() => { window.__thr = '20'; });
+  await p.waitForTimeout(1800); await p.evaluate(() => { window.__thr = '20'; });
   await toast(/Pull saved/);
-  await p.waitForSelector('#tune-body td:has-text("93")'); // 100 g/s airflow -> ~93 kW estimate
-  await p.screenshot({ path: '/tmp/e2e-tuning.png', fullPage: true });
+  await p.waitForSelector('#tune-body td:has-text("112")'); // 120 g/s peak airflow -> ~112 kW estimate
+  await p.click('[data-act=pull-dyno]'); await p.waitForSelector('#pull-dyno-out :text("virtual dyno")');
+  if (await p.locator('#pull-dyno-out :text("Possible knock")').count()) problems.push('false knock warning on a clean pull');
+  if (await p.locator('#pull-dyno-out td:text-is("1750")').count()) problems.push('lift-off sample leaked into the dyno curve');
+  if (!(await p.locator('#pull-dyno-out :text("112 kW @ 6000 rpm")').count())) problems.push('dyno peak not at 112 kW @ 6000 rpm: ' + await p.locator('#pull-dyno-out b').first().textContent());
+  await p.locator('#pull-dyno-out').screenshot({ path: '/tmp/e2e-dyno.png' });
 
   console.log(problems.length ? 'PROBLEMS:\n' + problems.join('\n') : 'SCANNER E2E OK');
   await b.close(); process.exit(problems.length ? 1 : 0);

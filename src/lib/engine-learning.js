@@ -93,6 +93,71 @@ function pullPeaks(summary = {}) {
   };
 }
 
+// Full-throttle pull analysis: a "virtual dyno" curve plus the warnings a tuner looks for.
+// samples: [{ t, '010C': rpm, '0110': maf g/s, '010B': map kPa, '010E': timing, '010F': iat, '0144': lambda, '0111': throttle }]
+// Power is estimated from airflow (petrol, ±15 %) — reliable for before/after on the same car, not as an absolute figure.
+function analysePull(samples = [], summary = {}) {
+  const baro = summary['0133'] && Number.isFinite(summary['0133'].avg) ? summary['0133'].avg : 101;
+  const thr = (x) => (Number.isFinite(x['0111']) ? x['0111'] : Number.isFinite(x['0149']) ? x['0149'] : null);
+  let pts = samples.filter((x) => Number.isFinite(x['010C'])).sort((a, b) => a.t - b.t);
+  // only full-throttle samples count: drops the lift-off readings the recorder keeps to confirm the pull ended
+  if (pts.some((x) => thr(x) != null)) pts = pts.filter((x) => thr(x) == null || thr(x) >= 80);
+  // Skip the tip-in: the first ~300 ms after the throttle snaps open (sensors read a moment before it opened, timing
+  // settling), then start where rpm begins to climb.
+  if (pts.length > 6) {
+    const t0 = pts[0].t; const settled = pts.filter((x) => x.t >= t0 + 300);
+    if (settled.length >= 3) pts = settled;
+    let lo = 0; for (let i = 1; i < pts.length && i < pts.length / 3; i++) if (pts[i]['010C'] < pts[lo]['010C']) lo = i;
+    pts = pts.slice(lo);
+  }
+  const warnings = [];
+  if (pts.length < 3) return { curve: [], peak: null, warnings: [{ level: 'info', text: 'Too few samples for a curve. Use fewer sensors for a faster sample rate.' }], rpmFrom: null, rpmTo: null };
+  // curve: highest reading per 250 rpm bin
+  const bins = new Map();
+  for (const x of pts) {
+    const bin = Math.round(x['010C'] / 250) * 250;
+    const kw = powerFromMaf(x['0110']);
+    const cur = bins.get(bin) || { rpm: bin, kw: null, nm: null, boostBar: null, timing: null, lambda: null };
+    if (kw != null && (cur.kw == null || kw > cur.kw)) { cur.kw = kw; cur.nm = Math.round((kw * 9549) / Math.max(bin, 500)); }
+    if (Number.isFinite(x['010B'])) cur.boostBar = Math.max(cur.boostBar ?? -9, +((x['010B'] - baro) / 100).toFixed(2));
+    if (Number.isFinite(x['010E'])) cur.timing = Math.max(cur.timing ?? -99, x['010E']);
+    if (Number.isFinite(x['0144'])) cur.lambda = Math.max(cur.lambda ?? 0, x['0144']);
+    bins.set(bin, cur);
+  }
+  const curve = [...bins.values()].sort((a, b) => a.rpm - b.rpm);
+  const withKw = curve.filter((c) => c.kw != null);
+  const peakP = withKw.reduce((m, c) => (!m || c.kw > m.kw ? c : m), null);
+  const peakT = withKw.reduce((m, c) => (!m || c.nm > m.nm ? c : m), null);
+  const rpmFrom = pts[0]['010C'], rpmTo = Math.max(...pts.map((x) => x['010C']));
+  if (rpmTo - Math.min(...pts.map((x) => x['010C'])) < 2000) warnings.push({ level: 'info', text: 'The pull covered less than 2,000 rpm. Start lower (about 2,000 rpm) in a higher gear for a full curve.' });
+  // knock retard: timing falls 3°+ below the recent maximum while rpm keeps climbing
+  const knock = [];
+  for (let i = 2; i < pts.length; i++) {
+    const t = pts[i]['010E']; const prev = [pts[i - 1]['010E'], pts[i - 2]['010E']].filter(Number.isFinite);
+    if (!Number.isFinite(t) || !prev.length) continue;
+    const drop = Math.max(...prev) - t;
+    if (drop >= 3 && pts[i]['010C'] >= pts[i - 1]['010C']) knock.push({ rpm: Math.round(pts[i]['010C']), drop: +drop.toFixed(1) });
+  }
+  if (knock.length) warnings.push({ level: 'fail', text: `Possible knock: ignition timing pulled back ${knock.map((k) => `${k.drop}° at ${k.rpm} rpm`).slice(0, 4).join(', ')}. Check fuel octane, intake temperature and the tune's timing at those points.`, knock });
+  // commanded mixture under boost
+  const boosted = pts.filter((x) => Number.isFinite(x['010B']) && x['010B'] - baro > 20);
+  const lam = boosted.map((x) => x['0144']).filter(Number.isFinite);
+  if (lam.length && Math.max(...lam) > 0.95) warnings.push({ level: 'fail', text: `Commanded mixture is λ ${Math.max(...lam).toFixed(2)} under boost — too lean for full load on a turbo petrol (usually λ 0.78–0.88).` });
+  // intake heat soak
+  const iat = pts.map((x) => x['010F']).filter(Number.isFinite);
+  if (iat.length >= 2 && iat[iat.length - 1] - iat[0] >= 15) warnings.push({ level: 'warn', text: `Intake air rose ${Math.round(iat[iat.length - 1] - iat[0])} °C during the pull — intercooler efficiency or heat soak is costing power.` });
+  // boost taper at the top end
+  const bc = curve.filter((c) => c.boostBar != null);
+  if (bc.length >= 3) {
+    const peakB = Math.max(...bc.map((c) => c.boostBar)); const end = bc[bc.length - 1].boostBar;
+    if (peakB > 0.3 && peakB - end > 0.4) warnings.push({ level: 'info', text: `Boost falls from ${peakB} to ${end} bar by ${bc[bc.length - 1].rpm} rpm. Normal for small turbos; a sudden drop can be a boost leak or wastegate.` });
+  }
+  return {
+    curve, rpmFrom: Math.round(rpmFrom), rpmTo: Math.round(rpmTo), warnings,
+    peak: peakP ? { kw: peakP.kw, kwRpm: peakP.rpm, nm: peakT.nm, nmRpm: peakT.rpm } : null,
+  };
+}
+
 function comparePulls(before, after) {
   const a = pullPeaks(before.summary), b = pullPeaks(after.summary);
   const rows = [
@@ -103,7 +168,8 @@ function comparePulls(before, after) {
     const d = a[k] != null && b[k] != null ? +(b[k] - a[k]).toFixed(2) : null;
     return { key: k, label, unit, before: a[k], after: b[k], change: d, pct: d != null && a[k] ? Math.round((d / Math.abs(a[k])) * 100) : null };
   });
-  return { before: { id: before.id, at: before.started_at }, after: { id: after.id, at: after.started_at }, rows };
+  const ca = analysePull(before.samples || [], before.summary || {}), cb = analysePull(after.samples || [], after.summary || {});
+  return { before: { id: before.id, at: before.started_at, curve: ca.curve, peak: ca.peak }, after: { id: after.id, at: after.started_at, curve: cb.curve, peak: cb.peak }, rows };
 }
 
 // What the shop has learned about ECU software for this engine.
@@ -164,4 +230,4 @@ function tuneReadiness({ openDtcs = 0, readiness = null, monitorTests = null, su
   return { verdict, checks };
 }
 
-module.exports = { engineKey, engineLabel, learnProfile, compareToProfile, universalChecks, pullPeaks, comparePulls, powerFromMaf, learnCalibrations, softwareChange, tuneReadiness, MIN_SCANS, MIN_VEHICLES };
+module.exports = { engineKey, engineLabel, learnProfile, compareToProfile, universalChecks, pullPeaks, analysePull, comparePulls, powerFromMaf, learnCalibrations, softwareChange, tuneReadiness, MIN_SCANS, MIN_VEHICLES };
