@@ -81,7 +81,7 @@ Ships with a small curated list. To add a licensed dataset: `npm run import-dtc 
 - `GET /api/health` checks the database (use it for uptime monitoring).
 - Logs are JSON lines with request IDs. Optional Sentry: `npm i @sentry/node` and set `SENTRY_DSN`.
 - Backups: `scripts/backup.sh` (pg_dump + retention). Schedule it with cron and copy backups off the server; test a restore.
-- Run `docs/REAL-CAR-TEST.md` before selling.
+- Run `docs/REAL-CAR-TEST.md` before selling. What to build next: `docs/ROADMAP.md`.
 - Legal: `public/privacy.html` and `public/terms.html` are **templates** with [BRACKETS]; have a South African attorney complete them. POPIA applies.
 
 ## Security notes
