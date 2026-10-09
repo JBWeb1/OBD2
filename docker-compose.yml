@@ -1,0 +1,30 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: diagnosticos
+      POSTGRES_PASSWORD: diagnosticos
+      POSTGRES_DB: diagnosticos
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U diagnosticos"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  app:
+    build: .
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      JWT_SECRET: dev-only-secret-change-me
+      DATABASE_URL: postgres://diagnosticos:diagnosticos@db:5432/diagnosticos
+      APP_URL: http://localhost:3000
+      ALLOW_DEV_PLAN_SWITCH: "true"
+      # Add RESEND_API_KEY, TWILIO_*, PAYFAST_* here (or use env_file: .env) — see .env.example
+    ports: ["3000:3000"]
+    command: sh -c "node src/scripts/migrate.js && node src/server.js"
+volumes:
+  pgdata:

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DiagnosticOS — vehicle diagnostics for workshops</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div id="screen-landing">
+  <div class="landing-grid">
+    <div class="landing-hero">
+      <div class="hero-logo">DiagnosticOS</div>
+      <div class="hero-main">
+        <div class="hero-eyebrow">For dealerships &amp; tuning shops</div>
+        <h1 class="hero-h1">Diagnose.<br><em>Tune.</em><br>Deliver.</h1>
+        <p class="hero-sub">Read live data and fault codes from any OBD2 car with a USB ELM327 adapter, then keep every customer, vehicle, remap, inspection and invoice in one place.</p>
+        <div class="hero-features">
+          <div class="hero-feat"><div class="hero-feat-icon">⚡</div>Live OBD2 scanning</div>
+          <div class="hero-feat"><div class="hero-feat-icon">⚠</div>Read &amp; clear fault codes</div>
+          <div class="hero-feat"><div class="hero-feat-icon">📈</div>Remap log</div>
+          <div class="hero-feat"><div class="hero-feat-icon">👥</div>Customer CRM</div>
+          <div class="hero-feat"><div class="hero-feat-icon">💰</div>Invoices &amp; quotes</div>
+          <div class="hero-feat"><div class="hero-feat-icon">📋</div>Inspections</div>
+          <div class="hero-feat"><div class="hero-feat-icon">🚗</div>Service history</div>
+          <div class="hero-feat"><div class="hero-feat-icon">👤</div>Team accounts</div>
+        </div>
+      </div>
+      <div class="hero-footer">SAE J1979 · ISO 15765 CAN · ISO 14230 · ISO 9141 · J1850</div>
+    </div>
+    <div class="auth-panel">
+      <div class="auth-tabs">
+        <div class="auth-tab active" data-act="auth-tab" data-arg="login">Sign in</div>
+        <div class="auth-tab" data-act="auth-tab" data-arg="register">Register shop</div>
+      </div>
+      <form id="auth-login" data-form="login">
+        <div class="auth-title">Welcome back</div>
+        <div class="auth-sub">Sign in to your workshop</div>
+        <div class="field"><label>Email</label><input type="email" name="email" autocomplete="username" required></div>
+        <div class="field"><label>Password</label><input type="password" name="password" autocomplete="current-password" required></div>
+        <div id="login-err" class="auth-err"></div>
+        <button class="btn-auth" type="submit">Sign in →</button>
+        <div style="text-align:center;margin-top:14px"><a href="#" class="lnk" data-act="auth-tab" data-arg="forgot">Forgot your password?</a></div>
+      </form>
+      <form id="auth-forgot" data-form="forgot" style="display:none">
+        <div class="auth-title">Reset password</div>
+        <div class="auth-sub">We'll email you a link to choose a new one.</div>
+        <div class="field"><label>Email</label><input type="email" name="email" required></div>
+        <div id="forgot-err" class="auth-err"></div>
+        <button class="btn-auth" type="submit">Send reset link</button>
+        <div style="text-align:center;margin-top:14px"><a href="#" class="lnk" data-act="auth-tab" data-arg="login">Back to sign in</a></div>
+      </form>
+      <form id="auth-reset" data-form="reset" style="display:none">
+        <div class="auth-title">Choose a new password</div>
+        <div class="auth-sub">Minimum 8 characters.</div>
+        <div class="field"><label>New password</label><input type="password" name="password" minlength="8" autocomplete="new-password" required></div>
+        <div id="reset-err" class="auth-err"></div>
+        <button class="btn-auth" type="submit">Save new password</button>
+      </form>
+      <form id="auth-register" data-form="register" style="display:none">
+        <div class="auth-title">Start free trial</div>
+        <div class="auth-sub">14 days free · no card needed</div>
+        <div class="field"><label>Workshop name</label><input type="text" name="shopName" required></div>
+        <div class="field"><label>Your name</label><input type="text" name="name" required></div>
+        <div class="field"><label>Email</label><input type="email" name="email" autocomplete="username" required></div>
+        <div class="field"><label>Password</label><input type="password" name="password" minlength="8" autocomplete="new-password" placeholder="Min 8 characters" required></div>
+        <div class="field"><label>Plan (billed after the trial)</label>
+          <select name="plan"><option value="starter">Starter — R499/mo</option><option value="pro">Pro — R999/mo</option><option value="enterprise">Enterprise — R2,499/mo</option></select></div>
+        <label class="chk" style="border:0"><input type="checkbox" name="acceptTerms" required> <span>I accept the <a class="lnk" href="/terms" target="_blank">Terms</a> and <a class="lnk" href="/privacy" target="_blank">Privacy Policy</a></span></label>
+        <div id="register-err" class="auth-err"></div>
+        <button class="btn-auth" type="submit">Create account →</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div id="screen-app">
+  <nav class="topnav">
+    <div class="nav-logo">DiagnosticOS <span>/ <span id="nav-shop"></span></span></div>
+    <div class="nav-sep"></div>
+    <span id="nav-plan" class="shop-badge"></span>
+    <div class="nav-center"></div>
+    <div class="nav-right">
+      <button class="conn-btn" id="conn-btn" data-act="toggle-conn"><div class="conn-dot"></div><span id="conn-label">CONNECT OBD2</span></button>
+      <div class="avatar" id="user-av" title="Sign out" data-act="logout"></div>
+    </div>
+  </nav>
+  <div id="banner"></div>
+  <div class="app-body">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="main" id="main"></main>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal"><div class="modal" id="modal-box"></div></div>
+<div id="toast"></div>
+
+<script src="/elm327.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

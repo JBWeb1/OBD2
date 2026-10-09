@@ -1,0 +1,32 @@
+{
+  "name": "diagnosticos",
+  "version": "1.0.0",
+  "description": "DiagnosticOS — multi-tenant OBD2 diagnostics SaaS for workshops and dealerships",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate": "node src/scripts/migrate.js",
+    "seed": "node src/scripts/seed.js",
+    "import-dtc": "node src/scripts/import-dtc.js",
+    "reminders": "node src/jobs/run-reminders.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "pdfkit": "^0.20.2",
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "pg-mem": "^3.0.2"
+  }
+}
