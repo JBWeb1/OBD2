@@ -25,6 +25,13 @@ const authLimiter = rateLimit({
   message: { error: 'Too many attempts. Try again in a few minutes.' },
 });
 
+// Per signed-in user, so a stolen session can't be used to guess the current password quickly.
+const changePwLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false,
+  keyGenerator: (req) => `u${req.user.id}`, validate: false,
+  message: { error: 'Too many attempts. Try again in a few minutes.' },
+});
+
 // Used to keep login timing similar whether or not the email exists.
 const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10);
 
@@ -96,7 +103,7 @@ router.post('/reset', authLimiter, wrap(async (req, res) => {
   if (typeof password !== 'string' || password.length < 8 || password.length > 72) throw new HttpError(400, 'Password must be 8–72 characters');
   const uid = await tokens.consume(req.body.token, 'reset');
   if (!uid) throw new HttpError(400, 'This reset link is invalid or has expired');
-  await db.query('UPDATE users SET password_hash = $2, email_verified = true WHERE id = $1', [uid, await bcrypt.hash(password, 10)]);
+  await db.query('UPDATE users SET password_hash = $2, email_verified = true, token_version = token_version + 1 WHERE id = $1', [uid, await bcrypt.hash(password, 10)]);
   await db.query(`UPDATE auth_tokens SET used_at = now() WHERE user_id = $1 AND kind = 'reset' AND used_at IS NULL`, [uid]);
   res.json({ ok: true });
 }));
@@ -112,6 +119,19 @@ router.post('/resend-verification', authenticate, authLimiter, wrap(async (req, 
   const { rows } = await db.query('SELECT id, name, email, email_verified FROM users WHERE id = $1', [req.user.id]);
   if (!rows[0].email_verified) await sendVerification(rows[0]);
   res.json({ ok: true });
+}));
+
+// Signed-in password change. Every other session (other browsers, a lost laptop) is signed out;
+// this one gets a fresh token.
+router.post('/change-password', authenticate, changePwLimiter, wrap(async (req, res) => {
+  const current = req.body && req.body.currentPassword;
+  const next = req.body && req.body.newPassword;
+  if (typeof next !== 'string' || next.length < 8 || next.length > 72) throw new HttpError(400, 'New password must be 8–72 characters');
+  const { rows } = await db.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+  if (typeof current !== 'string' || !(await bcrypt.compare(current, rows[0].password_hash))) throw new HttpError(403, 'Current password is incorrect');
+  const u = await db.query('UPDATE users SET password_hash = $2, token_version = token_version + 1 WHERE id = $1 RETURNING id, tenant_id, role, token_version',
+    [req.user.id, await bcrypt.hash(next, 10)]);
+  res.json({ token: signToken(u.rows[0]) });
 }));
 
 router.get('/me', authenticate, (req, res) => {

@@ -108,14 +108,18 @@ router.patch('/:id', wrap(async (req, res) => {
 router.post('/:id/convert', wrap(async (req, res) => {
   const id = parseId(req.params.id);
   const out = await db.transaction(async (c) => {
-    const q = await c.query(`SELECT * FROM invoices WHERE id = $1 AND tenant_id = $2 AND kind = 'quote'`, [id, req.user.tenantId]);
-    if (!q.rows[0]) throw new HttpError(404, 'Quote not found');
+    // Claim the quote first so a double click (or two users) can't turn one quote into two invoices.
+    const q = await c.query(
+      `UPDATE invoices SET status = 'accepted' WHERE id = $1 AND tenant_id = $2 AND kind = 'quote' AND status <> 'accepted' RETURNING *`, [id, req.user.tenantId]);
+    if (!q.rows[0]) {
+      const ex = await c.query(`SELECT 1 FROM invoices WHERE id = $1 AND tenant_id = $2 AND kind = 'quote'`, [id, req.user.tenantId]);
+      throw ex.rows[0] ? new HttpError(409, 'This quote has already been converted to an invoice') : new HttpError(404, 'Quote not found');
+    }
     const src = q.rows[0];
     const inv = await create(c, req.user.tenantId, {
       values: { kind: 'invoice', customer_id: src.customer_id, vehicle_id: src.vehicle_id, due_on: null },
       items: src.items,
     });
-    await c.query(`UPDATE invoices SET status = 'accepted' WHERE id = $1`, [id]);
     return inv;
   });
   res.status(201).json(out);

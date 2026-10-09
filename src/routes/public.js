@@ -20,12 +20,13 @@ async function load(token) {
 
 router.get('/invoice/:token', wrap(async (req, res) => {
   const i = await load(req.params.token);
-  res.json({ shop: i.shop_name, phone: i.shop_phone, number: i.number, status: i.status, total_cents: i.total_cents, items: i.items.map((x) => ({ description: x.description, qty: x.qty, unit_cents: x.unit_cents })), issued_on: i.issued_on, due_on: i.due_on, canPay: Boolean(i.pf_merchant_id && i.pf_merchant_key) && i.status !== 'paid' });
+  res.json({ shop: i.shop_name, phone: i.shop_phone, number: i.number, status: i.status, total_cents: i.total_cents, items: i.items.map((x) => ({ description: x.description, qty: x.qty, unit_cents: x.unit_cents })), issued_on: i.issued_on, due_on: i.due_on, canPay: Boolean(i.pf_merchant_id && i.pf_merchant_key) && i.status === 'outstanding' });
 }));
 
 router.post('/invoice/:token/checkout', wrap(async (req, res) => {
   const i = await load(req.params.token);
   if (i.status === 'paid') throw new HttpError(400, 'This invoice is already paid');
+  if (i.status !== 'outstanding') throw new HttpError(400, 'This invoice is no longer payable. Contact the workshop.');
   if (!i.pf_merchant_id || !i.pf_merchant_key) throw new HttpError(400, 'Online payment is not available for this invoice');
   const cust = i.customer_id ? (await db.query('SELECT first_name, last_name, email FROM customers WHERE id = $1', [i.customer_id])).rows[0] : null;
   res.json(buildInvoiceCheckout({ creds: { merchantId: i.pf_merchant_id, merchantKey: i.pf_merchant_key, passphrase: decrypt(i.pf_passphrase_enc) }, invoice: i, customer: cust, shopName: i.shop_name }));

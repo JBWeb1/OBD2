@@ -59,6 +59,9 @@ const { chromium } = require(process.env.PW || 'playwright');
   await p.click('[data-nav=settings]'); await p.fill('#s-vat', '4123456789'); await p.fill('#s-phone', '021 555 0100'); await p.check('#s-rem');
   await p.click('[data-act=settings-save]'); await p.waitForFunction(() => /Settings saved/.test(document.querySelector('#toast').textContent));
   await shot('settings');
+  await p.fill('#pw-cur', 'password123'); await p.fill('#pw-new', 'password456'); await p.click('[data-act=pw-change]');
+  await p.waitForFunction(() => /Password changed/.test(document.querySelector('#toast').textContent));
+  await p.click('[data-nav=customers]'); await p.waitForSelector('td:has-text("Smith")'); // still signed in with the fresh token
   await p.click('[data-nav=audit]'); await p.waitForSelector('td:has-text("POST /invoices")');
   await p.click('[data-nav=dashboard]'); await p.waitForSelector('.stat-card'); await shot('dashboard2');
   // legal pages + forgot password form

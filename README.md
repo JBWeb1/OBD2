@@ -83,11 +83,12 @@ Ships with a small curated list. To add a licensed dataset: `npm run import-dtc 
 ## Security notes
 - Every query is scoped by `tenant_id`; foreign keys are checked to belong to the same tenant (covered by tests).
 - Passwords hashed with bcrypt; JWTs are re-checked against the database on every request; auth endpoints are rate limited; strict CSP (no inline scripts); all user content is HTML-escaped in the UI.
-- Included: email verification, password reset, audit log, data export and erasure. Not included yet: 2FA, session revocation after a password change (JWTs live up to 12 h), and per-customer consent records.
+- Included: email verification, password reset, password change (Settings), audit log, data export and erasure. Changing or resetting a password signs out every other session. Not included yet: 2FA and per-customer consent records.
 
 ## Tests
 ```bash
 npm test                      # API, account, features, data + ELM327 driver tests (in-memory Postgres)
+TEST_DATABASE_URL=postgres://user@localhost/scratch npm test   # same suite on a real Postgres (throwaway schema per run)
 node test/dev-server.js &     # in-memory server on :3111
 node test/e2e.js              # headless-browser smoke test (needs playwright)
 ```

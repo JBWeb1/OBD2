@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS users (
   name           TEXT NOT NULL,
   role           TEXT NOT NULL DEFAULT 'technician',
   email_verified BOOLEAN NOT NULL DEFAULT false,
+  token_version  INTEGER NOT NULL DEFAULT 0,     -- bumped on password change/reset: older sessions stop working
   created_at     TIMESTAMP NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS users_tenant_idx ON users(tenant_id);

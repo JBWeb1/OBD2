@@ -4,7 +4,7 @@ const { config } = require('../config');
 const { wrap, HttpError } = require('../lib/http');
 
 function signToken(user) {
-  return jwt.sign({ sub: user.id, tid: user.tenant_id, role: user.role }, config.jwtSecret, {
+  return jwt.sign({ sub: user.id, tid: user.tenant_id, role: user.role, ver: user.token_version || 0 }, config.jwtSecret, {
     expiresIn: config.jwtExpiresIn,
   });
 }
@@ -22,7 +22,7 @@ const authenticate = wrap(async (req, _res, next) => {
     throw new HttpError(401, 'Invalid or expired token');
   }
   const { rows } = await db.query(
-    `SELECT u.id, u.name, u.email, u.role, u.tenant_id, u.email_verified,
+    `SELECT u.id, u.name, u.email, u.role, u.tenant_id, u.email_verified, u.token_version,
             t.name AS tenant_name, t.plan, t.plan_status, t.trial_ends_at
        FROM users u JOIN tenants t ON t.id = u.tenant_id
       WHERE u.id = $1 AND u.tenant_id = $2`,
@@ -30,6 +30,8 @@ const authenticate = wrap(async (req, _res, next) => {
   );
   if (!rows[0]) throw new HttpError(401, 'Account no longer exists');
   const r = rows[0];
+  // Changing or resetting the password bumps token_version, which signs out every older session.
+  if ((payload.ver || 0) !== (r.token_version || 0)) throw new HttpError(401, 'Your session has ended. Please sign in again.');
   req.user = {
     id: r.id, name: r.name, email: r.email, role: r.role, tenantId: r.tenant_id, emailVerified: !!r.email_verified,
     tenant: { name: r.tenant_name, plan: r.plan, planStatus: r.plan_status, trialEndsAt: r.trial_ends_at },

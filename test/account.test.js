@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { start, db } = require('./helpers');
 const { outbox } = require('../src/lib/mailer');
+const { signToken } = require('../src/middleware/auth');
 
 let ctx;
 test.before(async () => { ctx = await start(); });
@@ -23,6 +24,7 @@ test('registration requires accepting terms and sends a verification email', asy
 });
 
 test('password reset: no account enumeration, single-use link, new password works', async () => {
+  const oldSession = (await ctx.call('POST', '/auth/login', { body: { email: 'n@x.com', password: 'password123' } })).body.token;
   const before = outbox.length;
   const ghost = await ctx.call('POST', '/auth/forgot', { body: { email: 'nobody@x.com' } });
   assert.equal(ghost.status, 200);
@@ -36,11 +38,29 @@ test('password reset: no account enumeration, single-use link, new password work
   assert.equal((await ctx.call('POST', '/auth/reset', { body: { token: t, password: 'anotherpass12' } })).status, 400);
   assert.equal((await ctx.call('POST', '/auth/login', { body: { email: 'n@x.com', password: 'password123' } })).status, 401);
   assert.equal((await ctx.call('POST', '/auth/login', { body: { email: 'n@x.com', password: 'brandnewpass1' } })).status, 200);
+  assert.equal((await ctx.call('GET', '/auth/me', { token: oldSession })).status, 401, 'reset signs out existing sessions');
   await ctx.call('POST', '/auth/forgot', { body: { email: 'n@x.com' } });
   await new Promise((x) => setTimeout(x, 50));
   const t2 = tokenFrom('reset');
   await db.query(`UPDATE auth_tokens SET expires_at = '2000-01-01'`);
   assert.equal((await ctx.call('POST', '/auth/reset', { body: { token: t2, password: 'whatever1234' } })).status, 400, 'expired link rejected');
+});
+
+test('change password: needs the current one, signs out other sessions, keeps this one', async () => {
+  const login = () => ctx.call('POST', '/auth/login', { body: { email: 'n@x.com', password: 'brandnewpass1' } });
+  const laptop = (await login()).body.token;
+  const phone = signToken((await db.query(`SELECT * FROM users WHERE email = 'n@x.com'`)).rows[0]); // a second signed-in device
+  assert.equal((await ctx.call('POST', '/auth/change-password', { body: { currentPassword: 'brandnewpass1', newPassword: 'x'.repeat(10) } })).status, 401);
+  assert.equal((await ctx.call('POST', '/auth/change-password', { token: laptop, body: { currentPassword: 'wrong', newPassword: 'changedpass99' } })).status, 403);
+  assert.equal((await ctx.call('POST', '/auth/change-password', { token: laptop, body: { currentPassword: 'brandnewpass1', newPassword: 'short' } })).status, 400);
+  const ch = await ctx.call('POST', '/auth/change-password', { token: laptop, body: { currentPassword: 'brandnewpass1', newPassword: 'changedpass99' } });
+  assert.equal(ch.status, 200);
+  assert.equal((await ctx.call('GET', '/auth/me', { token: phone })).status, 401, 'other session signed out');
+  assert.equal((await ctx.call('GET', '/auth/me', { token: laptop })).status, 401, 'old token of this session too');
+  assert.equal((await ctx.call('GET', '/auth/me', { token: ch.body.token })).status, 200, 'fresh token works');
+  assert.equal((await login()).status, 401);
+  // put it back for the tests below
+  await ctx.call('POST', '/auth/change-password', { token: ch.body.token, body: { currentPassword: 'changedpass99', newPassword: 'brandnewpass1' } });
 });
 
 test('shop profile, audit trail, export and erasure', async () => {

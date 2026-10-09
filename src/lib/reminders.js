@@ -17,8 +17,9 @@ async function runReminders(now = new Date()) {
        FROM vehicles v
        JOIN customers c ON c.id = v.customer_id AND c.tenant_id = v.tenant_id
        JOIN tenants t ON t.id = v.tenant_id
-      WHERE t.reminders_enabled = true AND t.plan_status IN ('active','trial')
-        AND v.next_service_on IS NOT NULL AND v.next_service_on <= $1`, [horizon]);
+      WHERE t.reminders_enabled = true
+        AND (t.plan_status = 'active' OR (t.plan_status = 'trial' AND (t.trial_ends_at IS NULL OR t.trial_ends_at > $2)))
+        AND v.next_service_on IS NOT NULL AND v.next_service_on <= $1`, [horizon, now]);
   const result = { checked: rows.length, sent: 0, skipped: 0, failed: 0 };
   for (const v of rows) {
     const due = d10(v.next_service_on);

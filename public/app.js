@@ -570,7 +570,12 @@ async function renderPhotos(id) {
 // ----- settings -----
 views.settings = async (el) => {
   const s = await api('/shop'); const admin = state.user.role === 'admin'; state.pendingLogo = undefined;
-  if (!admin) { el.innerHTML = page('Settings', '', '', '<div class="empty">Only admins can change workshop settings.</div>'); return; }
+  const pwCard = `<div class="card" style="margin-top:12px;max-width:520px"><div class="card-title">Your password</div>
+      <div class="field"><label>Current password</label><input id="pw-cur" type="password" autocomplete="current-password"></div>
+      <div class="field"><label>New password (8–72 characters)</label><input id="pw-new" type="password" autocomplete="new-password"></div>
+      <div class="page-sub" style="margin-bottom:10px">Changing it signs you out everywhere else.</div>
+      <button class="btn" data-act="pw-change">Change password</button></div>`;
+  if (!admin) { el.innerHTML = page('Settings', '', '', '<div class="empty">Only admins can change workshop settings.</div>' + pwCard); return; }
   el.innerHTML = page('Settings', 'Your details appear on invoices, quotes and reports', '<button class="btn primary" data-act="settings-save">Save settings</button>',
     `<div class="grid-2"><div class="card"><div class="card-title">Workshop profile</div>
       <div class="field"><label>Workshop name</label><input id="s-name" value="${esc(s.name)}"></div><div class="field"><label>Email</label><input id="s-email" type="email" value="${esc(s.email)}"></div>
@@ -586,6 +591,7 @@ views.settings = async (el) => {
       <div class="field"><label>Merchant ID</label><input id="s-pfid" value="${esc(s.pf_merchant_id)}"></div>
       <div class="field"><label>Merchant key ${s.pf_key_set ? '(saved — leave blank to keep)' : ''}</label><input id="s-pfkey" type="password" autocomplete="off"></div>
       <div class="field"><label>Passphrase ${s.pf_passphrase_set ? '(saved — leave blank to keep)' : ''}</label><input id="s-pfpass" type="password" autocomplete="off"></div></div></div></div>
+    ${pwCard}
     <div class="danger-zone"><div class="card-title" style="margin-bottom:6px">Your data</div><div class="page-sub" style="margin-bottom:10px">Download everything stored for your workshop, or permanently delete the account and all its data.</div>
       <button class="btn" data-act="export-data">⬇ Download all my data</button> <button class="btn danger" data-act="delete-account">Delete account…</button></div>`);
   $('#s-logo').addEventListener('change', async (e) => {
@@ -663,6 +669,10 @@ Object.assign(actions, {
     if ($('#s-pfkey').value) body.pf_merchant_key = $('#s-pfkey').value;
     if ($('#s-pfpass').value) body.pf_passphrase = $('#s-pfpass').value;
     const r = await api('/shop', { method: 'PUT', body }); state.user.tenant.name = r.name; $('#nav-shop').textContent = r.name; toast('Settings saved.', 'success'); go('settings');
+  }),
+  'pw-change': guard(async () => {
+    const r = await api('/auth/change-password', { method: 'POST', body: { currentPassword: $('#pw-cur').value, newPassword: $('#pw-new').value } });
+    setToken(r.token); $('#pw-cur').value = ''; $('#pw-new').value = ''; toast('Password changed. Other sessions were signed out.', 'success');
   }),
   'export-data': guard(async () => saveBlob(await apiBlob('/shop/export'), 'diagnosticos-export.json')),
   'delete-account': () => openModal('Delete account permanently', `<div class="annotation">This deletes your workshop and ALL its customers, vehicles, invoices, scans and team accounts. It cannot be undone. Download your data first.</div>

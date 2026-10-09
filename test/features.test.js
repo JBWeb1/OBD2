@@ -59,6 +59,15 @@ test('inspection photos: validated, tenant-scoped, served back', async () => {
   assert.equal((await fetch(`${ctx.base}/inspections/${insp.id}/photos/${ph.body.id}/image`, { headers: { Authorization: 'Bearer ' + B } })).status, 404);
 });
 
+test('a quote converts to an invoice only once (no duplicate invoice or double stock deduction)', async () => {
+  const p = (await ctx.call('POST', '/parts', { token: A, body: { name: 'Spark plug', qty: 8 } })).body;
+  const q = (await ctx.call('POST', '/invoices', { token: A, body: { kind: 'quote', customer_id: cust.id, items: [{ description: 'Spark plug', qty: 4, unit_cents: 8000, part_id: p.id }] } })).body;
+  const [c1, c2] = await Promise.all([1, 2].map(() => ctx.call('POST', `/invoices/${q.id}/convert`, { token: A })));
+  assert.deepEqual([c1.status, c2.status].sort(), [201, 409]);
+  assert.equal((await ctx.call('GET', `/parts/${p.id}`, { token: A })).body.qty, 4, 'stock taken once');
+  assert.equal((await ctx.call('POST', `/invoices/${q.id}/convert`, { token: B })).status, 404, 'other shop cannot convert it');
+});
+
 test('scan stores readiness + freeze frame', async () => {
   const s = await ctx.call('POST', '/scans', { token: A, body: { vehicle_id: veh.id, protocol: 'CAN', readiness: { mil: true, monitors: [] }, freeze_frame: { dtc: 'P0301', values: { '0C': 1726 } }, dtcs: [{ code: 'P0301' }] } });
   assert.equal(s.status, 201);
@@ -106,6 +115,12 @@ test('customer payment link uses the workshop\'s own PayFast account and ITN mar
   assert.equal((await ctx.call('GET', `/invoices/${inv.id}`, { token: A })).body.status, 'outstanding', 'underpayment ignored');
   await post([...base, ['signature', signature(base, 'shopsecret')]]);
   assert.equal((await ctx.call('GET', `/invoices/${inv.id}`, { token: A })).body.status, 'paid');
+  // a cancelled invoice keeps its link but can no longer be paid online
+  const inv2 = (await ctx.call('POST', '/invoices', { token: A, body: { customer_id: cust.id, items: [{ description: 'Tyres', qty: 1, unit_cents: 100000 }] } })).body;
+  const t2 = (await ctx.call('POST', `/invoices/${inv2.id}/pay-link`, { token: A })).body.url.split('#')[1];
+  await ctx.call('PATCH', `/invoices/${inv2.id}`, { token: A, body: { status: 'cancelled' } });
+  assert.equal((await ctx.call('GET', `/public/invoice/${t2}`)).body.canPay, false);
+  assert.equal((await ctx.call('POST', `/public/invoice/${t2}/checkout`)).status, 400);
 });
 
 test('service reminders: opt-in, sent once, SMS + email, idempotent', async () => {
@@ -120,7 +135,14 @@ test('service reminders: opt-in, sent once, SMS + email, idempotent', async () =
   assert.match(outbox.find((m) => m.type === 'sms').to, /^\+2782555/);
   assert.equal((await runReminders(new Date('2026-10-11T07:00:00Z'))).sent, 0, 'not re-sent for the same service date');
   await ctx.call('PATCH', `/vehicles/${veh.id}`, { token: A, body: { next_service_on: '2027-10-14' } });
+  await db.query(`UPDATE tenants SET trial_ends_at = '2030-01-01' WHERE name = 'Shop A'`); // keep the trial running for this check
   assert.equal((await runReminders(new Date('2027-10-10T07:00:00Z'))).sent, 1, 'next year\'s service reminds again');
+  // a shop whose trial has run out doesn't send (the platform pays for the SMS)
+  await ctx.call('PATCH', `/vehicles/${veh.id}`, { token: A, body: { next_service_on: '2028-10-14' } });
+  await db.query(`UPDATE tenants SET trial_ends_at = '2028-10-01' WHERE name = 'Shop A'`);
+  assert.equal((await runReminders(new Date('2028-10-10T07:00:00Z'))).sent, 0, 'expired trial');
+  await db.query(`UPDATE tenants SET plan_status = 'active' WHERE name = 'Shop A'`);
+  assert.equal((await runReminders(new Date('2028-10-10T07:00:00Z'))).sent, 1, 'paid plan sends');
 });
 
 test('secrets round-trip and DTC CSV import', () => {
