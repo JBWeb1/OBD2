@@ -147,6 +147,7 @@ router.get('/vehicle/:id', wrap(async (req, res) => {
       changed: change ? { ...change, remapLogged } : null,
       knownForEngine: calibrations,
     },
+    mods: (await db.query('SELECT id, category, title, road_legal, done_on, notes FROM vehicle_mods WHERE tenant_id = $1 AND vehicle_id = $2 ORDER BY done_on DESC, id DESC', [t, id])).rows,
     pulls: mine.rows.filter((s) => s.kind === 'pull' && s.summary).map((s) => ({ id: s.id, at: s.started_at, peaks: L.pullPeaks(s.summary) })),
     ecu: await (async () => {
       const names = (ecu && ecu.ecu_info.names) || [];

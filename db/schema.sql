@@ -225,3 +225,19 @@ CREATE TABLE IF NOT EXISTS ecu_profiles (
 );
 CREATE INDEX IF NOT EXISTS ecu_profiles_tenant_idx ON ecu_profiles(tenant_id);
 CREATE INDEX IF NOT EXISTS ecu_profiles_key_idx ON ecu_profiles(ecu_key);
+
+-- Per-vehicle modification log: what was changed on this specific car, for the workshop's records and the customer's
+-- history. Documentation only. road_legal makes the legality of each change explicit (emissions deletes are illegal
+-- on road cars in most markets).
+CREATE TABLE IF NOT EXISTS vehicle_mods (
+  id          SERIAL PRIMARY KEY,
+  tenant_id   INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  vehicle_id  INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+  category    TEXT NOT NULL DEFAULT 'other',   -- engine|intake|exhaust|turbo|fuel|emissions|suspension|transmission|software|other
+  title       TEXT NOT NULL,                   -- e.g. "Stage 1 remap", "Catless downpipe"
+  road_legal  TEXT NOT NULL DEFAULT 'check',   -- road | track | check
+  done_on     DATE NOT NULL DEFAULT CURRENT_DATE,
+  notes       TEXT,
+  created_at  TIMESTAMP NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS vehicle_mods_tenant_idx ON vehicle_mods(tenant_id, vehicle_id);

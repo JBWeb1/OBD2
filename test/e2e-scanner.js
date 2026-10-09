@@ -118,6 +118,14 @@ function fakeSerial() {
   await p.waitForSelector('#tune-body td:has-text("KESS3")');
   if (!(await p.locator('#tune-body :text("track only")').count())) problems.push('road-legal badge not shown');
   if (!(await p.locator('#tune-body .badge:has-text("yours")').count())) problems.push('own ECU note not marked yours');
+  // modification log
+  await p.click('[data-act=mod-new]');
+  await p.waitForSelector('#modal-form [name=title]');
+  await p.fill('#modal-form [name=title]', 'Catless downpipe');
+  await p.selectOption('#modal-form [name=category]', 'exhaust');
+  await p.selectOption('#modal-form [name=road_legal]', 'track');
+  await p.click('#modal-form button[type=submit]');
+  await p.waitForSelector('#tune-body td:has-text("Catless downpipe")');
   await p.click('[data-act=pull-arm]'); await p.waitForSelector('#pull-box :text("ARMED")');
   await p.evaluate(() => { window.__thr = 'FF'; }); await p.waitForSelector('#pull-box :text("RECORDING")');
   await p.waitForTimeout(1800); await p.evaluate(() => { window.__thr = '20'; });

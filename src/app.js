@@ -68,6 +68,7 @@ function createApp() {
   app.use('/api/remaps', rec.remaps);
   app.use('/api/jobs', rec.jobs);
   app.use('/api/parts', rec.parts);
+  app.use('/api/vehicle-mods', rec.vehicleMods);
   app.use('/api/scans', sc.scans);
   app.use('/api/dtc', sc.dtc);
   app.use('/api/invoices', require('./routes/invoices'));

@@ -30,3 +30,11 @@ CREATE TABLE IF NOT EXISTS ecu_profiles (
 );
 CREATE INDEX IF NOT EXISTS ecu_profiles_tenant_idx ON ecu_profiles(tenant_id);
 CREATE INDEX IF NOT EXISTS ecu_profiles_key_idx ON ecu_profiles(ecu_key);
+CREATE TABLE IF NOT EXISTS vehicle_mods (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+  category TEXT NOT NULL DEFAULT 'other', title TEXT NOT NULL, road_legal TEXT NOT NULL DEFAULT 'check',
+  done_on DATE NOT NULL DEFAULT CURRENT_DATE, notes TEXT, created_at TIMESTAMP NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS vehicle_mods_tenant_idx ON vehicle_mods(tenant_id, vehicle_id);

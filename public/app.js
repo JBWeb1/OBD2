@@ -405,6 +405,7 @@ async function renderReport(id) {
     <h3 style="margin-top:14px">${esc(vehLabel(v))}</h3><div class="muted">VIN ${esc(v.vin || '—')} · ${esc(v.engine || '')} · ${v.mileage_km != null ? v.mileage_km.toLocaleString('en-ZA') + ' km' : ''} · Owner: ${esc(fullName(r.customer))}</div>
     <h3 style="margin-top:14px">Fault codes</h3>${table(['Date', 'Code', 'Description', 'Status'], r.dtcs.map((d) => `<tr><td>${day(d.created_at)}</td><td>${esc(d.code)}</td><td>${esc(d.info.name)}</td><td>${esc(d.status)}</td></tr>`), 'None recorded.')}
     <h3 style="margin-top:14px">Remaps</h3>${table(['Date', 'ECU', 'Stage', 'Before → after (kW)'], r.remaps.map((m) => `<tr><td>${day(m.done_on)}</td><td>${esc(m.ecu || '—')}</td><td>${esc(m.stage || '—')}</td><td>${m.power_before_kw ?? '—'} → ${m.power_after_kw ?? '—'}</td></tr>`), 'None recorded.')}
+    <h3 style="margin-top:14px">Modifications</h3>${table(['Date', 'Category', 'Modification', 'Road-legal'], (r.mods || []).map((m) => `<tr><td>${day(m.done_on)}</td><td>${esc(m.category)}</td><td>${esc(m.title)}</td><td>${legalBadge(m.road_legal)}</td></tr>`), 'None recorded.')}
     <h3 style="margin-top:14px">Inspections</h3>${table(['Date', 'Type', 'Status'], r.inspections.map((i) => `<tr><td>${day(i.created_at)}</td><td>${esc(i.type)}</td><td>${esc(i.status)}</td></tr>`), 'None recorded.')}
     <h3 style="margin-top:14px">Invoices</h3>${table(['#', 'Date', 'Amount', 'Status'], r.invoices.map((i) => `<tr><td>${i.number}</td><td>${day(i.issued_on)}</td><td>${money(i.total_cents)}</td><td>${esc(i.status)}</td></tr>`), 'None recorded.')}
     <h3 style="margin-top:14px">Scans</h3>${table(['Date', 'Protocol', 'Source'], r.scans.map((s) => `<tr><td>${day(s.started_at)}</td><td>${esc(s.protocol || '—')}</td><td>${esc(s.source)}</td></tr>`), 'None recorded.')}</div>`;
@@ -610,6 +611,9 @@ async function loadTune() {
     ${r.ecu.reference.length ? r.ecu.reference.map((g) => `<div style="margin-top:8px"><b>${esc(g.ecu_name)}</b>${g.make ? ' · ' + esc(g.make) : ''} <span class="badge b-blue">${g.shops} shop${g.shops === 1 ? '' : 's'}</span>
       ${table(['Access', 'Tool', 'Road-legal', 'Notes', ''], g.entries.map((e) => `<tr><td>${accessLabel(e.access_method)}</td><td>${esc(e.tool || '—')}</td><td>${legalBadge(e.road_legal)}</td><td>${esc(e.security_note || e.notes || '—')}</td><td>${e.mine ? '<span class="badge b-green">yours</span>' : ''}</td></tr>`))}</div>`).join('')
       : '<div class="empty">No notes for this ECU yet. Add one so your team — and, if you opt in to the shared library, other workshops — know how it is tuned.</div>'}</div>
+  <div class="card" style="margin-bottom:12px"><div class="card-title">Modifications <button class="btn sm" data-act="mod-new">+ Log modification</button></div>
+    <div class="page-sub" style="margin-bottom:8px">What has been changed on this car. Kept in the vehicle history and on its report. Emissions deletes (DPF/EGR/cat) are illegal on road cars in most markets — mark legality honestly.</div>
+    ${table(['Date', 'Category', 'Modification', 'Road-legal', 'Notes', ''], (r.mods || []).map((m) => `<tr><td>${day(m.done_on)}</td><td>${modCat(m.category)}</td><td>${esc(m.title)}</td><td>${legalBadge(m.road_legal)}</td><td>${esc(m.notes || '')}</td><td><button class="btn sm danger" data-act="mod-del" data-arg="${m.id}">Delete</button></td></tr>`), 'No modifications logged for this car.')}</div>
   <div class="card"><div class="card-title">Pulls (full-throttle runs) <button class="btn sm" data-act="pull-compare">Compare ticked</button></div>
     ${r.pulls.length ? table(['', 'Date', 'Est. power*', 'Peak airflow', 'Peak boost', 'Peak timing', 'Peak IAT', 'Peak RPM', ''], r.pulls.map((p) => `<tr><td><input type="checkbox" data-pull="${p.id}"></td><td>${day(p.at)} ${esc(String(p.at).slice(11, 16))}</td><td><b>${fmt(p.peaks.estKw)}</b> kW</td><td>${fmt(p.peaks.mafGs)} g/s</td><td>${fmt(p.peaks.boostBar)} bar</td><td>${fmt(p.peaks.timingDeg)}°</td><td>${fmt(p.peaks.iatC)} °C</td><td>${fmt(p.peaks.rpm)}</td><td><button class="btn sm" data-act="pull-dyno" data-arg="${p.id}">Dyno &amp; checks</button></td></tr>`))
       + '<div class="page-sub" style="margin-top:6px">* Estimated from peak airflow (petrol engines, about ±15%). Best used to compare the same car before and after a change, not as a dyno figure.</div>'
@@ -619,6 +623,16 @@ async function loadTune() {
 
 const accessLabel = (a) => ({ obd: 'OBD port', bench: 'Bench', boot: 'Boot mode', unknown: 'Unknown' }[a] || esc(a));
 const legalBadge = (l) => ({ road: '<span class="badge b-green">road-legal</span>', track: '<span class="badge b-amber">track only</span>', check: '<span class="badge b-blue">check legality</span>' }[l] || esc(l));
+const MOD_CATS = ['engine', 'intake', 'exhaust', 'turbo', 'fuel', 'emissions', 'suspension', 'transmission', 'software', 'other'];
+const modCat = (c) => c.charAt(0).toUpperCase() + c.slice(1);
+function modForm() {
+  const sel = (name, opts, cur) => `<select name="${name}">${opts.map(([v, l]) => `<option value="${v}"${v === cur ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
+  return `<div class="field"><label>Modification</label><input name="title" placeholder="e.g. Stage 1 remap, catless downpipe, coilovers" required></div>
+    <div class="grid-2"><div class="field"><label>Category</label>${sel('category', MOD_CATS.map((c) => [c, modCat(c)]), 'other')}</div>
+    <div class="field"><label>Road-legal</label>${sel('road_legal', [['check', 'Check legality'], ['road', 'Road-legal'], ['track', 'Track only']], 'check')}</div></div>
+    <div class="field"><label>Date</label><input name="done_on" type="date" value="${new Date().toISOString().slice(0, 10)}"></div>
+    <div class="field"><label>Notes (optional)</label><textarea name="notes" rows="3"></textarea></div>`;
+}
 function ecuNoteForm(v = {}) {
   const sel = (name, opts, cur) => `<select name="${name}">${opts.map(([val, lbl]) => `<option value="${val}"${val === cur ? ' selected' : ''}>${lbl}</option>`).join('')}</select>`;
   return `<div class="field"><label>ECU name</label><input name="ecu_name" value="${esc(v.ecu_name || '')}" placeholder="e.g. Bosch MED17.5.5" required></div>
@@ -856,6 +870,13 @@ Object.assign(actions, {
   }),
   'pull-start': () => { if (pull.running && !pull.recording) { pull.recording = true; pull.started = Date.now(); } },
   'pull-stop': guard(async () => { if (!pull.running) return; if (pull.recording) await finishPull(); else { pull.running = false; pull.armed = false; } renderPull(); }),
+  'mod-new': guard(async () => {
+    const vid = Number($('#tune-vehicle') && $('#tune-vehicle').value); if (!vid) return toast('Pick the vehicle first.', 'error');
+    openModal('Log modification', modForm(), guard(async (f) => {
+      await api('/vehicle-mods', { method: 'POST', body: { ...f, vehicle_id: vid } }); closeModal(); loadTune();
+    }));
+  }),
+  'mod-del': guard(async (id) => { if (confirm('Delete this modification record?')) { await api('/vehicle-mods/' + id, { method: 'DELETE' }); loadTune(); } }),
   'ecu-note': guard(async () => {
     const r = loadTune.data || {}; const ecu = r.ecu || { names: [], reference: [] };
     const name = ecu.names[0] || '';

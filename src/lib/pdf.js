@@ -70,7 +70,7 @@ function section(doc, title, heads, rows, widths) {
 }
 
 function vehicleReportPdf({ shop, report }) {
-  const { vehicle: v, customer, dtcs, remaps, inspections, invoices, scans } = report;
+  const { vehicle: v, customer, dtcs, remaps, inspections, invoices, scans, mods = [] } = report;
   return build((doc) => {
     header(doc, shop, 'VEHICLE REPORT', new Date().toISOString().slice(0, 10));
     doc.font('Helvetica-Bold').fontSize(13).text(`${v.year || ''} ${v.make} ${v.model}`.trim());
@@ -78,6 +78,8 @@ function vehicleReportPdf({ shop, report }) {
     doc.text(`Owner: ${customer ? `${customer.first_name} ${customer.last_name || ''}`.trim() : '—'}${v.next_service_on ? `  ·  Next service ${ymd(v.next_service_on)}` : ''}`).fillColor('#000');
     section(doc, 'Fault codes', ['Date', 'Code', 'Description', 'Status'], dtcs.map((d) => [ymd(d.created_at), d.code, d.info.name, d.status]), [70, 60, 280, 90]);
     section(doc, 'Remaps', ['Date', 'ECU', 'Stage', 'Power kW (before → after)'], remaps.map((m) => [ymd(m.done_on), m.ecu, m.stage, `${m.power_before_kw ?? '—'} → ${m.power_after_kw ?? '—'}`]), [70, 150, 100, 180]);
+    const legalWord = { road: 'Road-legal', track: 'Track only', check: 'Check legality' };
+    section(doc, 'Modifications', ['Date', 'Category', 'Modification', 'Road-legal'], mods.map((m) => [ymd(m.done_on), m.category, m.title, legalWord[m.road_legal] || m.road_legal]), [70, 90, 230, 110]);
     section(doc, 'Inspections', ['Date', 'Type', 'Status'], inspections.map((i) => [ymd(i.created_at), i.type, i.status.replace('_', ' ')]), [90, 200, 210]);
     section(doc, 'Invoices', ['#', 'Date', 'Amount', 'Status'], invoices.map((i) => [i.number, ymd(i.issued_on), money(i.total_cents), i.status]), [60, 100, 120, 220]);
     section(doc, 'Scans', ['Date', 'Protocol', 'Source'], scans.map((s) => [ymd(s.started_at), s.protocol, s.source]), [100, 250, 150]);

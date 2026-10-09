@@ -255,3 +255,27 @@ test('ECU reference shows on the vehicle whose ECU name matches, and is opt-in s
   const bId = (await db.query(`SELECT id FROM tenants WHERE name = 'Tune B'`)).rows[0].id;
   assert.ok(!raw.includes(`t${bId}`) && !raw.includes('tenant_id') && !raw.includes('"id":'), 'no shop/tenant identity leaks into shared reference');
 });
+
+test('vehicle modification log: tenant-scoped CRUD, validation, on the tuning view and report', async () => {
+  const v = await car(A, '2.0 TSI');
+  assert.equal((await ctx.call('POST', '/vehicle-mods', { token: A, body: { vehicle_id: v, category: 'exhaust' } })).status, 400, 'title required');
+  const bad = await ctx.call('POST', '/vehicle-mods', { token: A, body: { vehicle_id: v, title: 'x', category: 'nope' } });
+  assert.equal(bad.status, 400, 'bad category rejected');
+  const m = await ctx.call('POST', '/vehicle-mods', { token: A, body: { vehicle_id: v, category: 'emissions', title: 'DPF delete', road_legal: 'track', done_on: '2026-02-01', notes: 'Off-road use only' } });
+  assert.equal(m.status, 201); assert.equal(m.body.category, 'emissions'); assert.equal(m.body.road_legal, 'track');
+  await ctx.call('POST', '/vehicle-mods', { token: A, body: { vehicle_id: v, category: 'software', title: 'Stage 1 remap', road_legal: 'road' } });
+  // another shop cannot attach a mod to this vehicle, nor delete A's
+  assert.equal((await ctx.call('POST', '/vehicle-mods', { token: B, body: { vehicle_id: v, title: 'hack' } })).status, 400, 'vehicle_id must belong to the shop');
+  assert.equal((await ctx.call('DELETE', `/vehicle-mods/${m.body.id}`, { token: B })).status, 404);
+  // shows on the tuning view, newest first
+  const tv = (await ctx.call('GET', `/tuning/vehicle/${v}`, { token: A })).body;
+  assert.equal(tv.mods.length, 2); assert.equal(tv.mods[0].title, 'Stage 1 remap', 'newest (today) first; DPF is back-dated');
+  // shows on the vehicle report + PDF renders
+  const rep = (await ctx.call('GET', `/reports/vehicle/${v}`, { token: A })).body;
+  assert.ok(rep.mods.some((x) => x.title === 'Stage 1 remap'));
+  const pdf = await fetch(`${ctx.base}/reports/vehicle/${v}/pdf`, { headers: { Authorization: 'Bearer ' + A } });
+  assert.equal(Buffer.from(await pdf.arrayBuffer()).slice(0, 5).toString(), '%PDF-');
+  // delete
+  assert.equal((await ctx.call('DELETE', `/vehicle-mods/${m.body.id}`, { token: A })).status, 204);
+  assert.equal((await ctx.call('GET', `/tuning/vehicle/${v}`, { token: A })).body.mods.length, 1);
+});

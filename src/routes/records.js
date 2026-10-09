@@ -177,4 +177,18 @@ inspections.delete('/:id/photos/:pid', wrap(async (req, res) => {
   res.status(204).end();
 }));
 
-module.exports = { customers, vehicles, inspections, remaps, jobs, parts, assertOwned };
+// ---------- vehicle modification log ----------
+const MOD_CATEGORIES = ['engine', 'intake', 'exhaust', 'turbo', 'fuel', 'emissions', 'suspension', 'transmission', 'software', 'other'];
+const vehicleMods = crud({
+  table: 'vehicle_mods',
+  spec: { vehicle_id: 'int', category: 'enum:engine|intake|exhaust|turbo|fuel|emissions|suspension|transmission|software|other', title: 'text', road_legal: 'enum:road|track|check', done_on: 'date', notes: 'longtext' },
+  required: ['vehicle_id', 'title'],
+  order: 'done_on DESC, id DESC',
+  decorateList: async (rows, req) => {
+    const v = await db.query('SELECT id, make, model, year, plate FROM vehicles WHERE tenant_id = $1', [req.user.tenantId]);
+    const vmap = byKey(v.rows, 'id');
+    return rows.map((r) => ({ ...r, vehicle: vmap.get(r.vehicle_id) || null }));
+  },
+});
+
+module.exports = { customers, vehicles, inspections, remaps, jobs, parts, vehicleMods, MOD_CATEGORIES, assertOwned };
