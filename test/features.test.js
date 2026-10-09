@@ -68,6 +68,37 @@ test('a quote converts to an invoice only once (no duplicate invoice or double s
   assert.equal((await ctx.call('POST', `/invoices/${q.id}/convert`, { token: B })).status, 404, 'other shop cannot convert it');
 });
 
+test('cancelling an invoice returns its parts; un-cancelling takes them again; delete never double-returns', async () => {
+  const p = (await ctx.call('POST', '/parts', { token: A, body: { name: 'Brake disc', qty: 6 } })).body;
+  const qty = async () => (await ctx.call('GET', `/parts/${p.id}`, { token: A })).body.qty;
+  const inv = (await ctx.call('POST', '/invoices', { token: A, body: { items: [{ description: 'Brake disc', qty: 2, unit_cents: 90000, part_id: p.id }] } })).body;
+  assert.equal(await qty(), 4);
+  assert.equal((await ctx.call('PATCH', `/invoices/${inv.id}`, { token: A, body: { status: 'cancelled' } })).status, 200);
+  assert.equal(await qty(), 6, 'cancel returns stock');
+  assert.equal((await ctx.call('PATCH', `/invoices/${inv.id}`, { token: A, body: { status: 'cancelled' } })).status, 200);
+  assert.equal(await qty(), 6, 'cancelling twice does nothing');
+  await ctx.call('PATCH', `/invoices/${inv.id}`, { token: A, body: { status: 'outstanding' } });
+  assert.equal(await qty(), 4, 'reinstating takes stock again');
+  await ctx.call('PATCH', `/invoices/${inv.id}`, { token: A, body: { status: 'cancelled' } });
+  await ctx.call('DELETE', `/invoices/${inv.id}`, { token: A });
+  assert.equal(await qty(), 6, 'deleting a cancelled invoice does not return stock a second time');
+  // not enough stock left to reinstate -> refused, nothing changes
+  const inv2 = (await ctx.call('POST', '/invoices', { token: A, body: { items: [{ description: 'Brake disc', qty: 5, unit_cents: 1, part_id: p.id }] } })).body;
+  await ctx.call('PATCH', `/invoices/${inv2.id}`, { token: A, body: { status: 'cancelled' } });
+  await ctx.call('POST', `/parts/${p.id}/adjust`, { token: A, body: { delta: -3 } });
+  assert.equal((await ctx.call('PATCH', `/invoices/${inv2.id}`, { token: A, body: { status: 'outstanding' } })).status, 400);
+  assert.equal((await ctx.call('GET', `/invoices/${inv2.id}`, { token: A })).body.status, 'cancelled');
+  assert.equal(await qty(), 3);
+});
+
+test('dashboard revenue counts invoices by the date they were paid', async () => {
+  const before = (await ctx.call('GET', '/reports/summary', { token: A })).body.revenueThisMonthCents;
+  const old = (await ctx.call('POST', '/invoices', { token: A, body: { items: [{ description: 'Old job', qty: 1, unit_cents: 70000 }] } })).body;
+  await db.query(`UPDATE invoices SET issued_on = '2020-01-15' WHERE id = $1`, [old.id]); // issued long ago, paid today
+  await ctx.call('PATCH', `/invoices/${old.id}`, { token: A, body: { status: 'paid' } });
+  assert.equal((await ctx.call('GET', '/reports/summary', { token: A })).body.revenueThisMonthCents, before + 70000);
+});
+
 test('scan stores readiness + freeze frame', async () => {
   const s = await ctx.call('POST', '/scans', { token: A, body: { vehicle_id: veh.id, protocol: 'CAN', readiness: { mil: true, monitors: [] }, freeze_frame: { dtc: 'P0301', values: { '0C': 1726 } }, dtcs: [{ code: 'P0301' }] } });
   assert.equal(s.status, 201);

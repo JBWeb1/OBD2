@@ -11,9 +11,11 @@ const dtc = express.Router();
 
 const monthStart = () => { const d = new Date(); return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)); };
 
+// Plan limits count live scans only (real adapter, with recorded readings). Reading or saving fault codes,
+// readiness or freeze frame is always free, so a shop at its limit can still diagnose a car.
 async function monthlyUsage(tenantId) {
   const { rows } = await db.query(
-    `SELECT COUNT(*)::int AS n FROM scan_sessions WHERE tenant_id = $1 AND source = 'adapter' AND started_at >= $2`,
+    `SELECT COUNT(*)::int AS n FROM scan_sessions WHERE tenant_id = $1 AND source = 'adapter' AND summary IS NOT NULL AND started_at >= $2`,
     [tenantId, monthStart()]);
   return rows[0].n;
 }
@@ -58,7 +60,7 @@ scans.post('/', wrap(async (req, res) => {
   const t = req.user.tenantId;
   if (values.vehicle_id) await assertOwned(t, 'vehicles', values.vehicle_id);
 
-  if (source === 'adapter') {
+  if (source === 'adapter' && values.summary) {
     const plan = config.plans[req.user.tenant.plan];
     const used = await monthlyUsage(t);
     if (used >= plan.scansPerMonth) {

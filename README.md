@@ -53,6 +53,8 @@ Honest limits:
 | Pro | 999 | 500 | 5 |
 | Enterprise | 2,499 | unlimited | unlimited |
 
+A live scan counts toward the limit; reading or clearing fault codes, readiness and freeze frame is always free.
+
 New shops get a 14-day trial. After the trial ends (or on cancellation) the account is **read-only** (writes return HTTP 402) until a plan is paid. Limits live in `src/config.js`.
 
 ### PayFast

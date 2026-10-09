@@ -65,16 +65,18 @@ test('scans: plan limit enforced, demo scans free, DTC logging', async () => {
   assert.equal(dtcs.body[0].code, 'P0420');
   await ctx.call('POST', '/scans', { token: B, body: { vehicle_id: v.id, dtcs: [{ code: 'P0420' }] } });
   assert.equal((await ctx.call('GET', `/dtc?vehicle_id=${v.id}`, { token: B })).body.length, 1, 'no duplicate open code');
+  assert.equal((await ctx.call('GET', '/scans/usage', { token: B })).body.used, 0, 'fault-code reads are not live scans');
   // exhaust starter limit (100) quickly via SQL, then API must refuse
-  await db.query(`INSERT INTO scan_sessions (tenant_id, source) SELECT t.id, 'adapter' FROM tenants t, generate_series(1,100) WHERE t.name='Shop B'`).catch(async () => {
-    for (let i = 0; i < 100; i++) await db.query(`INSERT INTO scan_sessions (tenant_id, source) SELECT id, 'adapter' FROM tenants WHERE name='Shop B'`);
-  });
-  const over = await ctx.call('POST', '/scans', { token: B, body: { vehicle_id: v.id } });
+  const tB = (await db.query(`SELECT id FROM tenants WHERE name='Shop B'`)).rows[0].id;
+  for (let i = 0; i < 100; i++) await db.query(`INSERT INTO scan_sessions (tenant_id, source, summary) VALUES ($1, 'adapter', $2)`, [tB, '{}']);
+  const live = { vehicle_id: v.id, summary: { '010C': { min: 800, max: 3000, avg: 1200 } } };
+  const over = await ctx.call('POST', '/scans', { token: B, body: live });
   assert.equal(over.status, 402);
   assert.equal(over.body.code, 'scan_limit');
+  assert.equal((await ctx.call('POST', '/scans', { token: B, body: { vehicle_id: v.id, dtcs: [{ code: 'P0301' }] } })).status, 201, 'reading codes still works at the limit');
   assert.equal((await ctx.call('POST', '/scans', { token: B, body: { vehicle_id: v.id, source: 'demo' } })).status, 201);
   const cleared = await ctx.call('POST', '/dtc/clear', { token: B, body: { vehicle_id: v.id } });
-  assert.equal(cleared.body.cleared, 1);
+  assert.equal(cleared.body.cleared, 2, 'P0420 + P0301');
 });
 
 test('team: user limit by plan, admin only', async () => {

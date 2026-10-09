@@ -16,7 +16,7 @@ router.get('/summary', wrap(async (req, res) => {
     one('SELECT COUNT(*)::int AS n FROM customers WHERE tenant_id = $1'),
     one('SELECT COUNT(*)::int AS n FROM vehicles WHERE tenant_id = $1'),
     one(`SELECT COUNT(*)::int AS n FROM dtc_events WHERE tenant_id = $1 AND status IN ('active','pending')`),
-    one(`SELECT COALESCE(SUM(total_cents),0)::int AS n FROM invoices WHERE tenant_id = $1 AND kind='invoice' AND status='paid' AND issued_on >= $2`, [t, monthStart]),
+    one(`SELECT COALESCE(SUM(total_cents),0)::int AS n FROM invoices WHERE tenant_id = $1 AND kind='invoice' AND status='paid' AND paid_at >= $2`, [t, monthStart]),
     one(`SELECT COALESCE(SUM(total_cents),0)::int AS n FROM invoices WHERE tenant_id = $1 AND kind='invoice' AND status='outstanding'`),
     one(`SELECT COUNT(*)::int AS n FROM invoices WHERE tenant_id = $1 AND kind='invoice' AND status='outstanding' AND due_on < $2`, [t, today()]),
   ]);

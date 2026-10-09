@@ -85,24 +85,36 @@ router.patch('/:id', wrap(async (req, res) => {
   const id = parseId(req.params.id);
   const { values, error } = sanitize(req.body, { due_on: 'date', status: 'text' }, { partial: true });
   if (error) throw new HttpError(400, error);
-  const sets = []; const params = [id, req.user.tenantId];
-  if (values.status !== undefined) {
-    if (!STATUSES.includes(values.status)) throw new HttpError(400, 'Invalid status');
-    params.push(values.status); sets.push(`status = $${params.length}`);
-    sets.push(values.status === 'paid' ? 'paid_at = now()' : 'paid_at = NULL');
-  }
-  if (values.due_on !== undefined) { params.push(values.due_on); sets.push(`due_on = $${params.length}`); }
-  if (req.body && req.body.items !== undefined) {
-    const items = parseItems(req.body.items);
-    const cur = await db.query('SELECT items, kind FROM invoices WHERE id = $1 AND tenant_id = $2', [id, req.user.tenantId]);
-    if (cur.rows[0] && cur.rows[0].kind === 'invoice' && (items.some((x) => x.part_id) || (cur.rows[0].items || []).some((x) => x.part_id))) throw new HttpError(400, 'Invoices with stocked parts cannot be edited. Delete and recreate it so stock stays correct.');
-    params.push(JSON.stringify(items)); sets.push(`items = $${params.length}`);
-    params.push(totalOf(items)); sets.push(`total_cents = $${params.length}`);
-  }
-  if (!sets.length) throw new HttpError(400, 'Nothing to update');
-  const { rows } = await db.query(`UPDATE invoices SET ${sets.join(', ')} WHERE id = $1 AND tenant_id = $2 RETURNING *`, params);
-  if (!rows[0]) throw new HttpError(404, 'Not found');
-  res.json(withOverdue(rows[0]));
+  if (values.status !== undefined && !STATUSES.includes(values.status)) throw new HttpError(400, 'Invalid status');
+  const items = req.body && req.body.items !== undefined ? parseItems(req.body.items) : undefined;
+  const row = await db.transaction(async (c) => {
+    const cur = (await c.query('SELECT items, kind, status FROM invoices WHERE id = $1 AND tenant_id = $2', [id, req.user.tenantId])).rows[0];
+    if (!cur) throw new HttpError(404, 'Not found');
+    const stocked = cur.kind === 'invoice' && (cur.items || []).some((x) => x.part_id);
+    const sets = []; const params = [id, req.user.tenantId, cur.status];
+    if (values.status !== undefined && values.status !== cur.status) {
+      params.push(values.status); sets.push(`status = $${params.length}`);
+      sets.push(values.status === 'paid' ? 'paid_at = now()' : 'paid_at = NULL');
+      // Cancelling an invoice puts its parts back on the shelf; un-cancelling takes them again.
+      if (stocked && values.status === 'cancelled') await returnStock(c, req.user.tenantId, cur.items);
+      if (stocked && cur.status === 'cancelled') await takeStock(c, req.user.tenantId, cur.items);
+    }
+    if (values.due_on !== undefined) { params.push(values.due_on); sets.push(`due_on = $${params.length}`); }
+    if (items) {
+      if (cur.kind === 'invoice' && (items.some((x) => x.part_id) || stocked)) throw new HttpError(400, 'Invoices with stocked parts cannot be edited. Delete and recreate it so stock stays correct.');
+      params.push(JSON.stringify(items)); sets.push(`items = $${params.length}`);
+      params.push(totalOf(items)); sets.push(`total_cents = $${params.length}`);
+    }
+    if (!sets.length) {
+      if (values.status !== undefined) return (await c.query('SELECT * FROM invoices WHERE id = $1', [id])).rows[0]; // status unchanged
+      throw new HttpError(400, 'Nothing to update');
+    }
+    // Only applies if nobody changed the status in the meantime, so stock is never moved twice.
+    const { rows } = await c.query(`UPDATE invoices SET ${sets.join(', ')} WHERE id = $1 AND tenant_id = $2 AND status = $3 RETURNING *`, params);
+    if (!rows[0]) throw new HttpError(409, 'This invoice was changed by someone else. Reload and try again.');
+    return rows[0];
+  });
+  res.json(withOverdue(row));
 }));
 
 router.post('/:id/convert', wrap(async (req, res) => {
@@ -173,9 +185,10 @@ router.post('/:id/pay-link', wrap(async (req, res) => {
 
 router.delete('/:id', wrap(async (req, res) => {
   await db.transaction(async (c) => {
-    const r = await c.query('DELETE FROM invoices WHERE id = $1 AND tenant_id = $2 RETURNING kind, items', [parseId(req.params.id), req.user.tenantId]);
+    const r = await c.query('DELETE FROM invoices WHERE id = $1 AND tenant_id = $2 RETURNING kind, status, items', [parseId(req.params.id), req.user.tenantId]);
     if (!r.rows[0]) throw new HttpError(404, 'Not found');
-    if (r.rows[0].kind === 'invoice') await returnStock(c, req.user.tenantId, r.rows[0].items);
+    // A cancelled invoice already gave its parts back.
+    if (r.rows[0].kind === 'invoice' && r.rows[0].status !== 'cancelled') await returnStock(c, req.user.tenantId, r.rows[0].items);
   });
   res.status(204).end();
 }));
