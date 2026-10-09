@@ -65,7 +65,7 @@ function renderBanner() {
 
 // ---------- navigation ----------
 const PAGES = [
-  ['Diagnostics', [['dashboard', '◈', 'Dashboard'], ['scanner', '⚡', 'Live scanner'], ['history', '📊', 'Scan history'], ['dtc', '⚠', 'Fault codes'], ['terminal', '⌨', 'Terminal'], ['pidref', '≡', 'PID reference']]],
+  ['Diagnostics', [['dashboard', '◈', 'Dashboard'], ['scanner', '⚡', 'Live scanner'], ['history', '📊', 'Scan history'], ['dtc', '⚠', 'Fault codes'], ['tune', '🏁', 'Tuning'], ['terminal', '⌨', 'Terminal'], ['pidref', '≡', 'PID reference']]],
   ['Workshop', [['jobs', '🛠', 'Jobs board'], ['customers', '👥', 'Customers'], ['vehicles', '🚗', 'Vehicles'], ['tuning', '📈', 'Remap log'], ['inspections', '📋', 'Inspections'], ['parts', '🔩', 'Parts & stock'], ['invoices', '💰', 'Invoices & quotes'], ['reports', '🖨', 'Vehicle report']]],
   ['Account', [['settings', '⚙', 'Settings'], ['team', '👤', 'Team'], ['audit', '🕘', 'Audit log'], ['billing', '💳', 'Billing']]],
 ];
@@ -558,6 +558,103 @@ function drawLive() {
   drawChart($('#live-chart'), [{ label: p ? p.name : sel.value, points: live.samples.filter((s) => s[sel.value] !== undefined).map((s) => ({ t: s.t, v: s[sel.value] })) }], p && p.unit);
 }
 
+// ----- tuning: learned engine profiles, ECU software, pulls -----
+const PULL_PIDS = ['0C', '0D', '0B', '33', '10', '0E', '0F', '04', '11', '49', '44', '06', '05'];
+const pull = { armed: false, recording: false, running: false, samples: [], stats: {}, started: 0, low: 0, vid: null, pids: [] };
+const fmt = (v) => (v == null ? '—' : Math.abs(v) >= 100 ? Math.round(v) : +(+v).toFixed(2));
+const statusBadge = (st) => ({ normal: '<span class="badge b-green">normal</span>', high: '<span class="badge b-red">high for this engine</span>', low: '<span class="badge b-amber">low for this engine</span>', learning: '<span class="badge b-blue">learning</span>' }[st] || '');
+
+views.tune = async (el) => {
+  const [vehicles, lib] = await Promise.all([api('/vehicles'), api('/tuning/engines')]);
+  el.innerHTML = page('Tuning', 'Learns every engine you scan: what is normal for it, which ECU software it runs, and what a tune changed', '<button class="btn" data-act="nav" data-arg="tuning">📈 Remap log</button>',
+    `<div class="card" style="margin-bottom:12px"><div class="card-title">Vehicle</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select id="tune-vehicle" style="min-width:260px">${vehOptions(vehicles)}</select>
+      <button class="btn" data-act="tune-ecu">⬇ Read ECU software</button><button class="btn amber" data-act="pull-arm">🏁 Record a pull</button></div>
+      <div id="pull-box"></div></div>
+    <div id="tune-body"><div class="empty">Pick a vehicle to see its tuning picture.</div></div>
+    <div class="card" style="margin-top:12px"><div class="card-title">Engine library <span class="badge ${lib.shared ? 'b-green' : 'b-blue'}">${lib.shared ? 'shared learning on' : 'this workshop only'}</span></div>
+      <div class="page-sub" style="margin-bottom:8px">Every engine the system has learned from your scans${lib.shared ? ' and the shared pool' : ''}. An engine is "learned" after ${5} scans from 2+ cars; until then it is still learning. ${lib.shared ? '' : 'Admins can turn on shared learning under Settings to learn from other workshops too.'}</div>
+      ${table(['Engine', 'Vehicles', 'Your vehicles', 'Live scans', 'Pulls', 'ECU versions seen', 'Status'], lib.engines.map((e) => `<tr><td>${esc(e.label)}</td><td>${e.vehicles}</td><td>${e.yourVehicles}</td><td>${e.scans}</td><td>${e.pulls}</td><td>${e.calibrations}</td><td>${e.learned ? '<span class="badge b-green">learned</span>' : '<span class="badge b-blue">learning</span>'}</td></tr>`), 'Nothing learned yet. Every live scan, pull and ECU read on a vehicle with make, model and engine filled in teaches the system.')}</div>`);
+  $('#tune-vehicle').addEventListener('change', () => loadTune());
+  if (pull.vid) { $('#tune-vehicle').value = pull.vid; }
+  if ($('#tune-vehicle').value) loadTune();
+  renderPull();
+};
+
+async function loadTune() {
+  const vid = Number($('#tune-vehicle') && $('#tune-vehicle').value); const box = $('#tune-body'); if (!box) return;
+  if (!vid) { box.innerHTML = '<div class="empty">Pick a vehicle to see its tuning picture.</div>'; return; }
+  const r = await api('/tuning/vehicle/' + vid);
+  const verdict = { ready: ['b-green', 'Ready to tune'], not_ready: ['b-red', 'Not ready — fix these first'], incomplete: ['b-amber', 'Not enough data yet'] }[r.readiness.verdict];
+  const eng = r.engine;
+  const sw = r.software;
+  box.innerHTML = `<div class="grid-2" style="margin-bottom:12px">
+    <div class="card"><div class="card-title">Tune readiness <span class="badge ${verdict[0]}">${verdict[1]}</span></div>
+      ${r.readiness.checks.map((c) => `<div class="mon"><span>${esc(c.text)}</span><span class="badge ${c.ok === true ? 'b-green' : c.ok === false ? 'b-red' : 'b-amber'}">${c.ok === true ? 'OK' : c.ok === false ? 'Fix' : 'To do'}</span></div>`).join('')}
+      ${r.health && r.health.checks.length ? `<div style="margin-top:8px">${r.health.checks.map((c) => `<div class="annotation" style="margin-top:6px">${c.level === 'fail' ? '⛔' : '⚠'} ${esc(c.text)}</div>`).join('')}</div>` : ''}</div>
+    <div class="card"><div class="card-title">ECU software</div>
+      ${sw.lastRead ? `<div class="page-sub">Last read ${day(sw.lastRead.at)}${sw.lastRead.names && sw.lastRead.names.length ? ' · ' + esc(sw.lastRead.names.join(', ')) : ''}</div>
+        ${table(['Calibration ID', 'Checksum (CVN)', 'Status', 'Seen on'], sw.current.map((c) => `<tr><td style="font-family:var(--fm)">${esc(c.calid)}</td><td style="font-family:var(--fm)">${esc(c.cvn || '—')}</td><td>${c.label === 'stock' ? '<span class="badge b-green">stock</span>' : c.label === 'tuned' ? '<span class="badge b-purple">tuned</span>' : '<span class="badge b-blue">not yet known</span>'}</td><td>${c.seenOn} car${c.seenOn === 1 ? '' : 's'}</td></tr>`), 'The ECU did not report a calibration ID.')}
+        ${sw.changed ? `<div class="annotation" style="margin-top:8px">ECU software changed since ${day(sw.changed.since)}. ${sw.changed.remapLogged ? 'A remap was logged in between — expected.' : '<b>No remap was logged</b> — it may have been tuned elsewhere or updated by a dealer.'}</div>` : ''}`
+      : '<div class="empty">Not read yet. Connect the adapter and press <b>Read ECU software</b>. It is read-only and changes nothing on the car.</div>'}
+      ${sw.knownForEngine.length ? `<div class="page-sub" style="margin:10px 0 4px">Software versions seen on ${esc(eng.label)}</div>${table(['Calibration ID', 'CVN', 'Cars', 'Learned as'], sw.knownForEngine.slice(0, 12).map((c) => `<tr><td style="font-family:var(--fm)">${esc(c.calid)}</td><td style="font-family:var(--fm)">${esc(c.cvn || '—')}</td><td>${c.vehicles}</td><td>${esc(c.label)}</td></tr>`))}` : ''}</div></div>
+  <div class="card" style="margin-bottom:12px"><div class="card-title">This car vs. its engine <span class="badge ${eng.learned ? 'b-green' : 'b-blue'}">${eng.learned ? `learned from ${eng.vehicles} cars · ${eng.scans} scans` : `learning — ${eng.scans}/${eng.needs.scans} scans from ${eng.vehicles}/${eng.needs.vehicles} other cars`}</span></div>
+    ${r.health ? `<div class="page-sub" style="margin-bottom:6px">Last live scan ${day(r.health.at)} compared with other ${esc(eng.label)} engines${eng.shared ? ' (including shared data)' : ''}. "Typical" is the middle 80% of what has been seen.</div>
+      ${table(['Parameter', 'This car (average)', 'Typical for this engine', 'Status'], r.health.vsEngine.map((c) => `<tr><td>${esc(c.name)}</td><td>${fmt(c.value)} ${esc(c.unit)}</td><td>${c.low == null ? '—' : `${fmt(c.low)} – ${fmt(c.high)} ${esc(c.unit)}`} <span style="color:var(--muted)">(${c.basedOn})</span></td><td>${statusBadge(c.status)}</td></tr>`), 'No comparable data yet.')}`
+      : '<div class="empty">No live scan for this car yet. Run one from the Live scanner with the engine warm.</div>'}</div>
+  <div class="card"><div class="card-title">Pulls (full-throttle runs) <button class="btn sm" data-act="pull-compare">Compare ticked</button></div>
+    ${r.pulls.length ? table(['', 'Date', 'Est. power*', 'Peak airflow', 'Peak boost', 'Peak timing', 'Peak IAT', 'Peak RPM'], r.pulls.map((p) => `<tr><td><input type="checkbox" data-pull="${p.id}"></td><td>${day(p.at)} ${esc(String(p.at).slice(11, 16))}</td><td><b>${fmt(p.peaks.estKw)}</b> kW</td><td>${fmt(p.peaks.mafGs)} g/s</td><td>${fmt(p.peaks.boostBar)} bar</td><td>${fmt(p.peaks.timingDeg)}°</td><td>${fmt(p.peaks.iatC)} °C</td><td>${fmt(p.peaks.rpm)}</td></tr>`))
+      + '<div class="page-sub" style="margin-top:6px">* Estimated from peak airflow (petrol engines, about ±15%). Best used to compare the same car before and after a change, not as a dyno figure.</div>'
+      : '<div class="empty">No pulls recorded. Record one before and one after a tune to see what changed.</div>'}
+    <div id="pull-compare-out"></div></div>`;
+}
+
+function renderPull() {
+  const box = $('#pull-box'); if (!box) return;
+  if (!pull.running) { box.innerHTML = ''; return; }
+  const st = pull.stats; const show = (pid, label, unit) => (st[pid] ? `<div class="gauge active"><div class="g-label">${label} (peak)</div><div class="g-value">${fmt(st[pid].max)}</div><div class="g-unit">${unit}</div></div>` : '');
+  box.innerHTML = `<div class="annotation" style="margin-top:10px">${pull.recording ? `● RECORDING — ${(((Date.now() - pull.started) / 1000)).toFixed(1)} s. Lift off to finish.` : pull.armed ? 'ARMED — on a dyno or closed road, go to full throttle (2nd–4th gear) from low RPM. Recording starts automatically at full throttle and stops when you lift off.' : ''}
+      <button class="btn sm" data-act="pull-start">Start now</button> <button class="btn sm danger" data-act="pull-stop">${pull.recording ? 'Stop & save' : 'Cancel'}</button></div>
+    <div class="gauge-grid" style="margin-top:8px">${show('010C', 'RPM', 'rpm')}${show('0110', 'Airflow', 'g/s')}${show('010B', 'Manifold pressure', 'kPa')}${show('010E', 'Timing', '°')}${show('010F', 'Intake air', '°C')}</div>`;
+}
+
+async function runPull() {
+  const ref = new Map((await api('/reference/pids')).map((p) => [p.pid, p]));
+  while (pull.running) {
+    let v;
+    try { v = await elm.readPids(pull.pids); } catch (e) {
+      if (await elm.reconnect()) continue;
+      pull.running = false; toast('Adapter disconnected: ' + e.message, 'error'); break;
+    }
+    const thr = v['11'] ?? v['49'];
+    if (pull.armed && !pull.recording && thr != null && thr >= 85) { pull.recording = true; pull.started = Date.now(); }
+    if (pull.recording) {
+      const sample = { t: Date.now() - pull.started };
+      for (const [pid, val] of Object.entries(v)) {
+        if (val == null || Number.isNaN(val)) continue;
+        const key = '01' + pid; const p = ref.get(key) || {};
+        const st = pull.stats[key] || (pull.stats[key] = { name: p.name || key, unit: p.unit || '', min: val, max: val, sum: 0, n: 0 });
+        st.min = Math.min(st.min, val); st.max = Math.max(st.max, val); st.sum += val; st.n++; sample[key] = +val.toFixed(2);
+      }
+      pull.samples.push(sample);
+      pull.low = thr != null && thr < 40 ? pull.low + 1 : 0;
+      if (pull.low >= 2 || Date.now() - pull.started > 30000) { await finishPull(); break; }
+    }
+    renderPull();
+  }
+  renderPull();
+}
+
+async function finishPull() {
+  pull.running = false; pull.armed = false; pull.recording = false;
+  if (pull.samples.length < 3) { toast('Pull too short to save.', 'error'); return; }
+  const summary = {};
+  for (const [k, st] of Object.entries(pull.stats)) summary[k] = { name: st.name, unit: st.unit, min: st.min, max: st.max, avg: +(st.sum / st.n).toFixed(2), n: st.n };
+  const saved = await api('/scans', { method: 'POST', body: { vehicle_id: pull.vid, protocol: elm.protocol, source: 'adapter', kind: 'pull', summary, samples: pull.samples.slice(-600) } });
+  toast(`Pull saved (#${saved.id}).`, 'success');
+  if (state.page === 'tune') loadTune();
+}
+
 // ----- scan history -----
 views.history = async (el) => {
   const [scans, vehicles] = await Promise.all([api('/scans'), api('/vehicles')]);
@@ -640,6 +737,9 @@ views.settings = async (el) => {
     <div><div class="card" style="margin-bottom:12px"><div class="card-title">Service reminders</div>
       <label class="chk" style="border:0"><input type="checkbox" id="s-rem" ${s.reminders_enabled ? 'checked' : ''}> Email / SMS customers a week before their vehicle's next service date</label>
       <div class="page-sub" style="margin-top:6px">Only enable this if your customers have agreed to receive service messages. Set each vehicle's next service date under Vehicles.</div></div>
+    <div class="card" style="margin-bottom:12px"><div class="card-title">Engine learning</div>
+      <label class="chk" style="border:0"><input type="checkbox" id="s-share" ${s.share_engine_data ? 'checked' : ''}> Share anonymous engine data with other workshops (and learn from theirs)</label>
+      <div class="page-sub" style="margin-top:6px">Shares scan readings and ECU software IDs per engine type only — never customers, plates, VINs or vehicle records. Engines are learned much faster when many workshops pool their data. You only see pooled data while you share too.</div></div>
     <div class="card"><div class="card-title">Customer card payments (your PayFast account)</div>
       <div class="page-sub" style="margin-bottom:10px">Payment links on invoices pay <b>into your own PayFast account</b>. Enter your merchant details; the key and passphrase are stored encrypted and are never shown again.</div>
       <div class="field"><label>Merchant ID</label><input id="s-pfid" value="${esc(s.pf_merchant_id)}"></div>
@@ -706,6 +806,38 @@ Object.assign(actions, {
     savePidSel(new Set(which === 'all' ? avail.map((p) => p.pid) : which === 'none' ? [] : std.filter((p) => p.gM).map((p) => p.pid)));
     renderPidPicker();
   },
+  'tune-ecu': guard(async () => {
+    const vid = Number($('#tune-vehicle').value); if (!vid) return toast('Pick the vehicle first.', 'error');
+    if (!elm.connected) return toast('Connect the adapter first (Live scanner → Connect adapter).', 'error');
+    toast('Reading ECU software identification…', 'info');
+    const info = await elm.readEcuInfo();
+    if (!info) return toast('The ECU did not report its software identification.', 'error');
+    await api('/scans', { method: 'POST', body: { vehicle_id: vid, protocol: elm.protocol, source: 'adapter', ecu_info: info } });
+    const v = (await api('/vehicles')).find((x) => x.id === vid);
+    if (info.vin && v && !v.vin) await api('/vehicles/' + vid, { method: 'PATCH', body: { vin: info.vin } });
+    toast(`ECU software read: ${info.calids.length} calibration ID${info.calids.length === 1 ? '' : 's'}.`, 'success');
+    loadTune();
+  }),
+  'pull-arm': guard(async () => {
+    const vid = Number($('#tune-vehicle').value); if (!vid) return toast('Pick the vehicle first.', 'error');
+    if (!elm.connected) return toast('Connect the adapter first (Live scanner → Connect adapter).', 'error');
+    if (pull.running) return;
+    const sup = elm.supported;
+    const pids = PULL_PIDS.filter((p) => ELM327.DECODE[p] && (!sup.size || sup.has(p)));
+    if (!pids.includes('0C')) return toast('This car does not report engine RPM.', 'error');
+    Object.assign(pull, { armed: true, recording: false, running: true, samples: [], stats: {}, started: 0, low: 0, vid, pids });
+    if (!pids.includes('11') && !pids.includes('49')) toast('No throttle sensor reported — press Start now at full throttle and Stop when done.', 'info');
+    renderPull(); runPull();
+  }),
+  'pull-start': () => { if (pull.running && !pull.recording) { pull.recording = true; pull.started = Date.now(); } },
+  'pull-stop': guard(async () => { if (!pull.running) return; if (pull.recording) await finishPull(); else { pull.running = false; pull.armed = false; } renderPull(); }),
+  'pull-compare': guard(async () => {
+    const ids = [...document.querySelectorAll('[data-pull]:checked')].map((c) => Number(c.dataset.pull)).sort((a, b) => a - b);
+    if (ids.length !== 2) return toast('Tick exactly two pulls (before and after).', 'error');
+    const c = await api(`/tuning/compare?before=${ids[0]}&after=${ids[1]}`);
+    $('#pull-compare-out').innerHTML = `<div style="margin-top:12px"><b>Before #${c.before.id} (${day(c.before.at)}) → after #${c.after.id} (${day(c.after.at)})</b>
+      ${table(['', 'Before', 'After', 'Change'], c.rows.map((r) => `<tr><td>${esc(r.label)}</td><td>${fmt(r.before)} ${esc(r.unit)}</td><td>${fmt(r.after)} ${esc(r.unit)}</td><td>${r.change == null ? '—' : `<span class="badge ${r.change >= 0 ? 'b-green' : 'b-red'}">${r.change >= 0 ? '+' : ''}${fmt(r.change)} ${esc(r.unit)}${r.pct != null ? ` (${r.pct >= 0 ? '+' : ''}${r.pct}%)` : ''}</span>`}</td></tr>`))}</div>`;
+  }),
   'term-save': () => saveBlob(new Blob([termLog.map(([d, t]) => `${d} ${t}`).join('\n')], { type: 'text/plain' }), 'obd-terminal-log.txt'),
   'job-new': guard(async () => openModal('New job', await jobForm(), guard(async (f) => { await api('/jobs', { method: 'POST', body: jobBody(f) }); closeModal(); go('jobs'); }))),
   'job-edit': guard(async (id) => { const j = views.jobs.rows.find((x) => x.id === Number(id)); openModal('Edit job', await jobForm(j), guard(async (f) => { await api('/jobs/' + id, { method: 'PATCH', body: jobBody(f) }); closeModal(); go('jobs'); })); }),
@@ -736,7 +868,7 @@ Object.assign(actions, {
   'photo-del': guard(async (a) => { const [i, p] = a.split(':'); await api(`/inspections/${i}/photos/${p}`, { method: 'DELETE' }); renderPhotos(i); }),
   'logo-clear': guard(async () => { await api('/shop', { method: 'PUT', body: { logo: null } }); go('settings'); }),
   'settings-save': guard(async () => {
-    const body = { name: $('#s-name').value, email: $('#s-email').value || null, phone: $('#s-phone').value || null, address: $('#s-address').value || null, vat_number: $('#s-vat').value || null, bank_details: $('#s-bank').value || null, reminders_enabled: $('#s-rem').checked, pf_merchant_id: $('#s-pfid').value };
+    const body = { name: $('#s-name').value, email: $('#s-email').value || null, phone: $('#s-phone').value || null, address: $('#s-address').value || null, vat_number: $('#s-vat').value || null, bank_details: $('#s-bank').value || null, reminders_enabled: $('#s-rem').checked, share_engine_data: $('#s-share').checked, pf_merchant_id: $('#s-pfid').value };
     if (state.pendingLogo) body.logo = state.pendingLogo;
     if ($('#s-pfkey').value) body.pf_merchant_key = $('#s-pfkey').value;
     if ($('#s-pfpass').value) body.pf_passphrase = $('#s-pfpass').value;

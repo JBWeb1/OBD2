@@ -9,7 +9,7 @@ const { encrypt } = require('../lib/secrets');
 
 const router = express.Router();
 const LOGO_RE = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/;
-const PROFILE = 'id, name, email, phone, address, vat_number, bank_details, logo, reminders_enabled, plan, plan_status, trial_ends_at, terms_accepted_at, pf_merchant_id, (pf_merchant_key IS NOT NULL) AS pf_key_set, (pf_passphrase_enc IS NOT NULL) AS pf_passphrase_set';
+const PROFILE = 'id, name, email, phone, address, vat_number, bank_details, logo, reminders_enabled, share_engine_data, plan, plan_status, trial_ends_at, terms_accepted_at, pf_merchant_id, (pf_merchant_key IS NOT NULL) AS pf_key_set, (pf_passphrase_enc IS NOT NULL) AS pf_passphrase_set';
 
 router.get('/', wrap(async (req, res) => {
   const { rows } = await db.query(`SELECT ${PROFILE} FROM tenants WHERE id = $1`, [req.user.tenantId]);
@@ -26,6 +26,7 @@ router.put('/', requireAdmin, subscriptionGuard, wrap(async (req, res) => {
     values.logo = b.logo || null;
   }
   if (b.reminders_enabled !== undefined) values.reminders_enabled = b.reminders_enabled === true;
+  if (b.share_engine_data !== undefined) values.share_engine_data = b.share_engine_data === true;
   // The workshop's own PayFast account for customer payment links. Key and passphrase are write-only.
   const pf = (v, max) => (typeof v === 'string' && v.length <= max ? v.trim() : undefined);
   if (b.pf_merchant_id !== undefined) { const v = pf(b.pf_merchant_id, 20); if (v === undefined || (v && !/^\d+$/.test(v))) throw new HttpError(400, 'Invalid PayFast merchant ID'); values.pf_merchant_id = v || null; }
@@ -50,7 +51,7 @@ router.get('/export', requireAdmin, wrap(async (req, res) => {
   for (const tbl of ['customers', 'vehicles', 'invoices', 'inspections', 'remaps', 'jobs', 'parts', 'dtc_events', 'audit_log']) {
     out[tbl] = (await db.query(`SELECT * FROM ${tbl} WHERE tenant_id = $1`, [t])).rows;
   }
-  out.scan_sessions = (await db.query('SELECT id, vehicle_id, protocol, source, started_at, ended_at, summary, readiness, freeze_frame, monitor_tests FROM scan_sessions WHERE tenant_id = $1', [t])).rows;
+  out.scan_sessions = (await db.query('SELECT id, vehicle_id, protocol, source, started_at, ended_at, summary, readiness, freeze_frame, monitor_tests, kind, ecu_info FROM scan_sessions WHERE tenant_id = $1', [t])).rows;
   res.setHeader('Content-Disposition', 'attachment; filename="diagnosticos-export.json"');
   res.json(out);
 }));

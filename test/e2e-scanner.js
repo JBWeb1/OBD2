@@ -5,10 +5,12 @@ const { chromium } = require(process.env.PW || 'playwright');
 
 // Runs inside the page before the app loads.
 function fakeSerial() {
-  const VALUES = { '04': '66', '05': '52', '0C': '1AF8', '0D': '3C', '0F': '41', '11': '80', '2F': '80', '42': '3778', '46': '3C' };
+  const VALUES = { '04': '66', '05': '52', '0B': 'DC', '0C': '1AF8', '0D': '3C', '0E': '9C', '0F': '41', '10': '2710', '2F': '80', '33': '64', '42': '3778', '46': '3C' };
+  window.__thr = '80'; // throttle position byte; tests set FF for full throttle
   const FIXED = {
     ATZ: 'ELM327 v1.5', ATE0: 'OK', ATL0: 'OK', ATS0: 'OK', ATH0: 'OK', ATAT1: 'OK', ATSP0: 'OK', ATDP: 'AUTO, ISO 15765-4 (CAN 11/500)',
-    '0100': '4100981A8001', '0120': '412000020001', '0140': '414044000000',
+    '0100': '4100983F8001', '0120': '412000022001', '0140': '414044000000',
+    '0904': '013\n0:49040130334339\n1:3036303536444B\n2:2034343231', '0906': '490601A1B2C3D4',
     '03': '4302030104 20'.replace(/ /g, ''), '07': '4700', '0A': '4A00',
     '0600': '460000000001', '0620': '462080000000', '0621': '013\n0:46218024007800\n1:0000C821810B03\n2:8400640320',
   };
@@ -18,7 +20,7 @@ function fakeSerial() {
     if (FIXED[cmd]) return FIXED[cmd];
     if (/^01([0-9A-F]{2})+$/.test(cmd)) {
       const pids = cmd.slice(2).match(/../g);
-      const parts = pids.filter((p) => VALUES[p]).map((p) => p + VALUES[p]);
+      const parts = pids.filter((p) => VALUES[p] || p === '11').map((p) => p + (p === '11' ? window.__thr : VALUES[p]));
       return parts.length ? '41' + parts.join('') : 'NO DATA';
     }
     return 'NO DATA';
@@ -64,7 +66,7 @@ function fakeSerial() {
 
   // connect: the picker should list exactly what the car supports (9 PIDs incl. battery voltage from the 0140 range)
   await p.click('[data-nav=scanner]'); await p.click('[data-act=toggle-conn]');
-  await p.waitForSelector('#pid-pick :text("9 sensors this car supports")');
+  await p.waitForSelector('#pid-pick :text("13 sensors this car supports")');
   if (!(await p.locator('#pid-pick [data-pid="0142"]').isChecked())) problems.push('battery voltage not selected by default');
   await p.locator('#pid-pick [data-pid="012F"]').check(); // add fuel level
   await p.selectOption('#scan-vehicle', { index: 1 });
@@ -91,6 +93,18 @@ function fakeSerial() {
   await p.screenshot({ path: '/tmp/e2e-scanner-mode06.png' });
   const usage = await p.evaluate(async () => (await (await fetch('/api/scans/usage', { headers: { Authorization: 'Bearer ' + localStorage.getItem('dos_token') } })).json()).used);
   if (usage !== 1) problems.push(`expected 1 live scan counted, got ${usage}`);
+
+  // tuning: read the ECU software, record a full-throttle pull, see it on the page
+  await p.click('[data-nav=tune]'); await p.selectOption('#tune-vehicle', { index: 1 });
+  await p.waitForSelector('#tune-body :text("Tune readiness")');
+  await p.click('[data-act=tune-ecu]'); await p.waitForSelector('#tune-body td:has-text("03C906056DK 4421")');
+  if (!(await p.locator('#tune-body td:has-text("A1B2C3D4")').count())) problems.push('CVN not shown');
+  await p.click('[data-act=pull-arm]'); await p.waitForSelector('#pull-box :text("ARMED")');
+  await p.evaluate(() => { window.__thr = 'FF'; }); await p.waitForSelector('#pull-box :text("RECORDING")');
+  await p.waitForTimeout(800); await p.evaluate(() => { window.__thr = '20'; });
+  await toast(/Pull saved/);
+  await p.waitForSelector('#tune-body td:has-text("93")'); // 100 g/s airflow -> ~93 kW estimate
+  await p.screenshot({ path: '/tmp/e2e-tuning.png', fullPage: true });
 
   console.log(problems.length ? 'PROBLEMS:\n' + problems.join('\n') : 'SCANNER E2E OK');
   await b.close(); process.exit(problems.length ? 1 : 0);

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS tenants (
   pf_merchant_id   TEXT,              -- the workshop's OWN PayFast account, used for customer invoice payment links
   pf_merchant_key  TEXT,
   pf_passphrase_enc TEXT,            -- AES-GCM encrypted
+  share_engine_data BOOLEAN NOT NULL DEFAULT false, -- opt-in: pool anonymous engine data with other shops so learning is faster
   created_at       TIMESTAMP NOT NULL DEFAULT now()
 );
 
@@ -81,7 +82,9 @@ CREATE TABLE IF NOT EXISTS scan_sessions (
   samples     JSONB,                             -- capped time series for charts
   readiness   JSONB,                             -- MIL + monitor status (Mode 01 PID 01)
   freeze_frame JSONB,                            -- freeze-frame data (Mode 02)
-  monitor_tests JSONB                            -- on-board monitor test results (Mode 06)
+  monitor_tests JSONB,                           -- on-board monitor test results (Mode 06)
+  kind        TEXT,                              -- 'live' scan, 'pull' (full-throttle run), or NULL (codes/tests only)
+  ecu_info    JSONB                              -- ECU software identity (Mode 09): calibration IDs, CVNs, ECU names
 );
 CREATE INDEX IF NOT EXISTS scans_tenant_idx ON scan_sessions(tenant_id, started_at);
 
@@ -138,7 +141,8 @@ CREATE TABLE IF NOT EXISTS remaps (
   power_after_kw   INTEGER,
   tuner        TEXT,
   notes        TEXT,
-  done_on      DATE NOT NULL DEFAULT CURRENT_DATE
+  done_on      DATE NOT NULL DEFAULT CURRENT_DATE,
+  created_at   TIMESTAMP NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS auth_tokens (

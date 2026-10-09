@@ -73,6 +73,7 @@ function createApp() {
   app.use('/api/invoices', require('./routes/invoices'));
   app.use('/api/users', require('./routes/users'));
   app.use('/api/reports', require('./routes/reports'));
+  app.use('/api/tuning', require('./routes/tuning'));
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Not found')));
 
   app.use(express.static(path.join(__dirname, '..', 'public'), { index: 'index.html', extensions: ['html'] }));

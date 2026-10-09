@@ -439,6 +439,28 @@
         .map((n) => String.fromCharCode(n)).join('').replace(/[^A-HJ-NPR-Z0-9]/g, '');
       return vin.length >= 17 ? vin.slice(0, 17) : null;
     }
+
+    // Mode 09 info items as raw data, one entry per answering ECU. CAN: "49 pid count data..."; older protocols send
+    // one line per 4 data bytes ("49 pid seq b1 b2 b3 b4") which are joined.
+    async _mode09(pid, timeout = 6000) {
+      const head = '49' + pid;
+      const msgs = messages(await this.send('09' + pid, timeout)).filter((m) => m.startsWith(head));
+      if (this.isCan) return msgs.map((m) => m.slice(6));
+      return msgs.length ? [msgs.map((m) => m.slice(6, 14)).join('')] : [];
+    }
+
+    // "Pulls" the ECU's software identity (Mode 09): calibration IDs (which software version is flashed), CVNs
+    // (checksums, which change when the software is modified) and the ECU name. Read-only; changes nothing.
+    async readEcuInfo() {
+      const ascii = (hex) => (hex.match(/.{2}/g) || []).map((h) => parseInt(h, 16)).filter((n) => n >= 32 && n < 127).map((n) => String.fromCharCode(n)).join('').trim();
+      const calids = []; const cvns = []; const names = [];
+      for (const data of await this._mode09('04')) for (let i = 0; i + 32 <= data.length; i += 32) { const c = ascii(data.slice(i, i + 32)); if (c) calids.push(c); }
+      for (const data of await this._mode09('06')) for (let i = 0; i + 8 <= data.length; i += 8) { const c = data.slice(i, i + 8); if (!/^0+$/.test(c)) cvns.push(c); }
+      if (this.isCan) for (const data of await this._mode09('0A')) { const n = ascii(data).replace(/\s*-\s*/, ' - '); if (n) names.push(n); }
+      const vin = await this.readVin();
+      if (!calids.length && !cvns.length && !names.length && !vin) return null;
+      return { calids, cvns, names, vin, protocol: this.protocol };
+    }
   }
 
   root.ELM327 = ELM327;

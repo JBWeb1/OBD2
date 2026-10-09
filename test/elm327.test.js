@@ -203,3 +203,35 @@ test('a late reply after a timeout is not taken as the answer to the next comman
   assert.equal(await e.readPid('0C'), 1726);
   clearTimeout(late); await e.disconnect();
 });
+
+test('reads ECU software identity (Mode 09): calibration IDs, CVNs, ECU name', async () => {
+  const hex = (s, len) => Buffer.from(s.padEnd(len, '\0')).toString('hex').toUpperCase();
+  fakeAdapter({
+    ...INIT,
+    // engine ECU with two calibration IDs (16 bytes each), transmission ECU with one
+    '0904': `023\n0:490402${hex('04E906023AB 1234', 16).slice(0, 8)}\n1:${hex('04E906023AB 1234', 16).slice(8, 22)}\n2:${hex('04E906023AB 1234', 16).slice(22)}${hex('SW0042', 16).slice(0, 2)}\n3:${hex('SW0042', 16).slice(2, 16)}\n4:${hex('SW0042', 16).slice(16)}\n4904010GKA0001AAAA`.replace('4904010GKA0001AAAA', `013\n0:490401${hex('TCM1', 16).slice(0, 8)}\n1:${hex('TCM1', 16).slice(8, 22)}\n2:${hex('TCM1', 16).slice(22)}`),
+    '0906': '490602A1B2C3D4 0000BEEF'.replace(/ /g, ''),
+    '090A': `017\n0:490A01${hex('ECM-EngineControl', 20).slice(0, 8)}\n1:${hex('ECM-EngineControl', 20).slice(8, 22)}\n2:${hex('ECM-EngineControl', 20).slice(22, 36)}\n3:${hex('ECM-EngineControl', 20).slice(36)}`,
+    '0902': '014\n0: 49 02 01 57 56 57\n1: 5A 5A 5A 36 52 5A\n2: 48 59 31 32 33 34 35 36',
+  });
+  const e = new ELM327(); await e.connect();
+  const info = await e.readEcuInfo();
+  assert.deepEqual(info.calids, ['04E906023AB 1234', 'SW0042', 'TCM1']);
+  assert.deepEqual(info.cvns, ['A1B2C3D4', '0000BEEF']);
+  assert.deepEqual(info.names, ['ECM - EngineControl']);
+  assert.equal(info.vin, 'WVWZZZ6RZHY123456');
+  await e.disconnect();
+});
+
+test('Mode 09 on K-line: 4-byte lines are joined into 16-byte calibration IDs', async () => {
+  const id = Buffer.from('1037369842ABCDEF').toString('hex').toUpperCase();
+  fakeAdapter({
+    ...INIT, '0100': 'BUS INIT: ...OK\n4100BE1FA810', ATDP: 'ISO 14230-4 (KWP FAST)',
+    '0904': [1, 2, 3, 4].map((n, i) => `49040${n}${id.slice(i * 8, i * 8 + 8)}`).join('\n'),
+    '0906': '490601CAFEF00D',
+  });
+  const e = new ELM327(); await e.connect();
+  const info = await e.readEcuInfo();
+  assert.deepEqual(info.calids, ['1037369842ABCDEF']); assert.deepEqual(info.cvns, ['CAFEF00D']); assert.deepEqual(info.names, []);
+  await e.disconnect();
+});

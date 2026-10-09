@@ -31,9 +31,21 @@ function parseCodes(list) {
   });
 }
 
+// ECU identity from the browser: keep only well-formed, short values (they are shown to other users and pooled).
+function cleanEcuInfo(raw) {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'object') throw new HttpError(400, 'Invalid "ecu_info"');
+  const list = (a, re, max = 10) => (Array.isArray(a) ? a : []).filter((x) => typeof x === 'string' && re.test(x)).slice(0, max);
+  const out = {
+    calids: list(raw.calids, /^[\x20-\x7E]{1,16}$/), cvns: list(raw.cvns, /^[0-9A-F]{8}$/), names: list(raw.names, /^[\x20-\x7E]{1,40}$/, 5),
+    vin: typeof raw.vin === 'string' && /^[A-HJ-NPR-Z0-9]{17}$/.test(raw.vin) ? raw.vin : null,
+  };
+  return out.calids.length || out.cvns.length || out.names.length || out.vin ? out : null;
+}
+
 scans.get('/', wrap(async (req, res) => {
   const { rows } = await db.query(
-    `SELECT id, vehicle_id, user_id, protocol, source, started_at, ended_at, summary, readiness
+    `SELECT id, vehicle_id, user_id, protocol, source, kind, started_at, ended_at, summary, readiness
        FROM scan_sessions WHERE tenant_id = $1 ORDER BY started_at DESC LIMIT 200`, [req.user.tenantId]);
   res.json(rows);
 }));
@@ -52,11 +64,12 @@ scans.get('/:id', wrap(async (req, res) => {
 // Saves a finished scan from the browser. `source: "adapter"` = real ELM327 readings and counts against the plan.
 scans.post('/', wrap(async (req, res) => {
   const { values, error } = sanitize(req.body, {
-    vehicle_id: 'int', protocol: 'text', source: 'enum:adapter|demo', summary: 'json', samples: 'json', readiness: 'json', freeze_frame: 'json', monitor_tests: 'json',
+    vehicle_id: 'int', protocol: 'text', source: 'enum:adapter|demo', summary: 'json', samples: 'json', readiness: 'json', freeze_frame: 'json', monitor_tests: 'json', kind: 'enum:live|pull',
   });
   if (error) throw new HttpError(400, error);
   const source = values.source || 'adapter';
   const codes = parseCodes(req.body && req.body.dtcs);
+  const ecuInfo = cleanEcuInfo(req.body && req.body.ecu_info);
   const t = req.user.tenantId;
   if (values.vehicle_id) await assertOwned(t, 'vehicles', values.vehicle_id);
 
@@ -70,9 +83,10 @@ scans.post('/', wrap(async (req, res) => {
 
   const out = await db.transaction(async (c) => {
     const { rows } = await c.query(
-      `INSERT INTO scan_sessions (tenant_id, vehicle_id, user_id, protocol, source, ended_at, summary, samples, readiness, freeze_frame, monitor_tests)
-       VALUES ($1,$2,$3,$4,$5, now(), $6, $7, $8, $9, $10) RETURNING *`,
-      [t, values.vehicle_id || null, req.user.id, values.protocol || null, source, values.summary || null, values.samples || null, values.readiness || null, values.freeze_frame || null, values.monitor_tests || null]);
+      `INSERT INTO scan_sessions (tenant_id, vehicle_id, user_id, protocol, source, ended_at, summary, samples, readiness, freeze_frame, monitor_tests, kind, ecu_info)
+       VALUES ($1,$2,$3,$4,$5, now(), $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+      [t, values.vehicle_id || null, req.user.id, values.protocol || null, source, values.summary || null, values.samples || null, values.readiness || null, values.freeze_frame || null, values.monitor_tests || null,
+       values.kind || (values.summary ? 'live' : null), ecuInfo ? JSON.stringify(ecuInfo) : null]);
     const scan = rows[0];
     if (values.vehicle_id && source === 'adapter') {
       for (const d of codes) {
