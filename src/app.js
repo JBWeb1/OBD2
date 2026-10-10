@@ -6,7 +6,7 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const { config, assertProductionConfig } = require('./config');
 const { errorHandler, HttpError } = require('./lib/http');
-const { authenticate, subscriptionGuard } = require('./middleware/auth');
+const { authenticate, subscriptionGuard, requireAdmin } = require('./middleware/auth');
 const db = require('./db');
 const monitor = require('./lib/monitor');
 const audit = require('./middleware/audit');
@@ -44,6 +44,11 @@ function createApp() {
   const billing = require('./routes/billing');
   app.use('/api/billing/itn', billing.itn);
 
+  // Every API response carries the running build, so a browser on an older build can offer to reload itself.
+  const version = require('./lib/version');
+  app.use('/api', (_req, res, next) => { res.setHeader('X-App-Version', version.tag); next(); });
+  app.get('/api/version', (_req, res) => res.json({ version: version.version, build: version.build, tag: version.tag, startedAt: version.startedAt }));
+
   app.use('/api', express.json({ limit: '2mb' }));
   app.use('/api', rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: true, legacyHeaders: false }));
 
@@ -75,6 +80,7 @@ function createApp() {
   app.use('/api/users', require('./routes/users'));
   app.use('/api/reports', require('./routes/reports'));
   app.use('/api/tuning', require('./routes/tuning'));
+  app.get('/api/updates', requireAdmin, require('./lib/http').wrap(async (_req, res) => res.json(await require('./lib/updates').check())));
   app.use('/api', (_req, _res, next) => next(new HttpError(404, 'Not found')));
 
   app.use(express.static(path.join(__dirname, '..', 'public'), { index: 'index.html', extensions: ['html'] }));

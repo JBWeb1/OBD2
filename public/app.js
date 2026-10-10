@@ -27,6 +27,7 @@ async function api(path, { method = 'GET', body } = {}) {
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  noteVersion(r.headers.get('X-App-Version'));
   if (r.status === 204) return null;
   let data = null; try { data = await r.json(); } catch (_) { /* no body */ }
   if (!r.ok) {
@@ -431,6 +432,8 @@ views.billing = async (el) => {
 
 // ---------- actions ----------
 const actions = {
+  'app-reload': () => location.reload(),
+  'app-reload-dismiss': () => { const b = document.getElementById('update-bar'); if (b) b.classList.remove('show'); },
   'auth-tab': (a) => { for (const f of ['login', 'register', 'forgot', 'reset']) $('#auth-' + f).style.display = a === f ? '' : 'none'; document.querySelectorAll('.auth-tab').forEach((t) => t.classList.toggle('active', t.dataset.arg === a)); },
   nav: (a) => go(a), logout, 'close-modal': closeModal, print: () => window.print(),
   'toggle-conn': () => (elm.connected ? disconnect().then(() => state.page === 'scanner' && go('scanner')) : connect()),
@@ -785,8 +788,11 @@ views.settings = async (el) => {
       <div class="field"><label>Merchant key ${s.pf_key_set ? '(saved — leave blank to keep)' : ''}</label><input id="s-pfkey" type="password" autocomplete="off"></div>
       <div class="field"><label>Passphrase ${s.pf_passphrase_set ? '(saved — leave blank to keep)' : ''}</label><input id="s-pfpass" type="password" autocomplete="off"></div></div></div></div>
     ${pwCard}
+    <div class="card" style="margin-bottom:12px"><div class="card-title">App version</div>
+      <div id="ver-box" class="page-sub">Checking…</div></div>
     <div class="danger-zone"><div class="card-title" style="margin-bottom:6px">Your data</div><div class="page-sub" style="margin-bottom:10px">Download everything stored for your workshop, or permanently delete the account and all its data.</div>
       <button class="btn" data-act="export-data">⬇ Download all my data</button> <button class="btn danger" data-act="delete-account">Delete account…</button></div>`);
+  loadVersionBox();
   $('#s-logo').addEventListener('change', async (e) => {
     const f = e.target.files[0]; if (!f) return;
     try { const url = await resizeToDataUrl(f, 300, 'image/png'); if (url.length > 380000) throw new Error('Logo is too detailed — use a simpler image'); state.pendingLogo = url; toast('Logo ready — press Save settings.', 'info'); } catch (ex) { toast(ex.message, 'error'); }
@@ -999,6 +1005,45 @@ document.addEventListener('submit', async (e) => {
 $('#modal').addEventListener('mousedown', (e) => { if (e.target.id === 'modal') closeModal(); });
 window.addEventListener('hashchange', () => { if (state.user && location.hash.slice(1) !== state.page) go(location.hash.slice(1)); });
 
+// ---------- self-update: notice a new deployed build and offer to reload ----------
+let loadedVersion = null; let updateReady = false;
+function noteVersion(tag) {
+  if (!tag) return;
+  if (loadedVersion === null) { loadedVersion = tag; return; }   // first response sets the baseline
+  if (tag !== loadedVersion && !updateReady) { updateReady = true; showUpdateBar(tag); }
+}
+function showUpdateBar(tag) {
+  let bar = document.getElementById('update-bar');
+  if (!bar) { bar = document.createElement('div'); bar.id = 'update-bar'; document.body.appendChild(bar); }
+  bar.innerHTML = `<span>A new version of Motrix is available${tag && /\+/.test(tag) ? '' : ` (v${esc(tag)})`}.</span>
+    <button class="btn sm primary" data-act="app-reload">Reload now</button>
+    <button class="btn sm" data-act="app-reload-dismiss">Later</button>`;
+  bar.classList.add('show');
+}
+// Re-check when the tab regains focus (covers a redeploy while the tab sat idle, with no API calls in between).
+async function checkVersion() {
+  try { const r = await fetch('/api/version', { cache: 'no-store' }); const v = (await r.json()).tag || r.headers.get('X-App-Version'); noteVersion(v); } catch (_) { /* offline: ignore */ }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkVersion(); });
+window.addEventListener('focus', checkVersion);
+if (typeof window !== 'undefined') window.__noteVersion = noteVersion; // e2e hook
+
+async function loadVersionBox() {
+  const box = document.getElementById('ver-box'); if (!box) return;
+  try {
+    const [v, u] = await Promise.all([fetch('/api/version').then((r) => r.json()), api('/updates').catch(() => null)]);
+    const cur = `v${esc(v.version)}${v.build ? ' · build ' + esc(v.build) : ''}`;
+    if (u && u.enabled && u.updateAvailable) {
+      box.innerHTML = `${cur} — <span class="badge b-amber">update available: v${esc(u.latest)}</span> ${u.url ? `<a class="lnk" href="${esc(u.url)}" target="_blank" rel="noopener">release notes</a>` : ''}
+        <div style="margin-top:6px">A newer release exists. Deploy it on the server to update — the app never installs code on its own. Open browsers are offered a reload automatically once it is live.</div>`;
+    } else if (u && u.enabled) {
+      box.innerHTML = `${cur} <span class="badge b-green">up to date</span>${u.checkedAt ? ` <span style="color:var(--muted)">checked ${day(u.checkedAt)}</span>` : ''}`;
+    } else {
+      box.innerHTML = `${cur}<div style="margin-top:6px" class="page-sub">Automatic release checks are off. Set UPDATE_CHECK_URL on the server to be told when a newer version is published (notification only).</div>`;
+    }
+  } catch (_) { box.textContent = 'Version information is unavailable.'; }
+}
+
 // ---------- boot ----------
 let resetToken = null;
 (async () => {
@@ -1008,6 +1053,7 @@ let resetToken = null;
     try { await api('/auth/verify', { method: 'POST', body: { token: m[2] } }); toast('Email verified. Thank you!', 'success'); } catch (e) { toast(e.message, 'error'); }
     history.replaceState(null, '', location.pathname);
   }
+  checkVersion();
   if (!token) return;
   try { const me = await api('/auth/me'); await enterApp(me); } catch (_) { setToken(null); }
 })();

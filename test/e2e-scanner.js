@@ -137,6 +137,15 @@ function fakeSerial() {
   if (!(await p.locator('#pull-dyno-out :text("112 kW @ 6000 rpm")').count())) problems.push('dyno peak not at 112 kW @ 6000 rpm: ' + await p.locator('#pull-dyno-out b').first().textContent());
   await p.locator('#pull-dyno-out').screenshot({ path: '/tmp/e2e-dyno.png' });
 
+  // self-update: Settings shows the app version, and a newer deployed build triggers the reload bar
+  await p.click('[data-nav=settings]'); await p.waitForSelector('#ver-box');
+  await p.waitForFunction(() => /v\d+\.\d+/.test(document.querySelector('#ver-box').textContent));
+  await p.evaluate(() => window.__noteVersion('99.0.0'));
+  await p.waitForSelector('#update-bar.show');
+  if (!(await p.locator('#update-bar :text("new version")').count())) problems.push('update bar text missing');
+  await p.click('[data-act=app-reload-dismiss]');
+  await p.waitForSelector('#update-bar:not(.show)');
+
   console.log(problems.length ? 'PROBLEMS:\n' + problems.join('\n') : 'SCANNER E2E OK');
   await b.close(); process.exit(problems.length ? 1 : 0);
 })().catch((e) => { console.error('SCANNER E2E FAIL', e.message); process.exit(1); });

@@ -16,6 +16,7 @@ const config = {
   mail: { resendKey: process.env.RESEND_API_KEY || '', from: process.env.MAIL_FROM || 'DiagnosticOS <no-reply@example.com>' },
   sms: { sid: process.env.TWILIO_SID || '', token: process.env.TWILIO_TOKEN || '', from: process.env.TWILIO_FROM || '' },
   sentryDsn: process.env.SENTRY_DSN || '',
+  updateCheckUrl: process.env.UPDATE_CHECK_URL || '',
   reminderHourUtc: Number(process.env.REMINDER_HOUR_UTC || 7),
   payfast: {
     sandbox: process.env.PAYFAST_SANDBOX !== 'false',

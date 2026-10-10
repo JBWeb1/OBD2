@@ -90,6 +90,7 @@ Ships with a small curated list. To add a licensed dataset: `npm run import-dtc 
 ## Operations
 - `GET /api/health` checks the database (use it for uptime monitoring).
 - Logs are JSON lines with request IDs. Optional Sentry: `npm i @sentry/node` and set `SENTRY_DSN`.
+- Self-update: every API response carries an `X-App-Version` header. When you deploy a newer build, open browsers notice and show a **Reload now** bar, so no one keeps running stale JavaScript. Stamp builds with `BUILD` (e.g. the git SHA) so same-version redeploys still trigger it. Set `UPDATE_CHECK_URL` to a release feed and admins see "update available" under Settings → App version — this is **notification only**; deploying the new code stays a deliberate human step (the app never pulls or runs remote code on its own). `GET /api/version` is public; `GET /api/updates` is admin-only.
 - Backups: `scripts/backup.sh` (pg_dump + retention). Schedule it with cron and copy backups off the server; test a restore.
 - Run `docs/REAL-CAR-TEST.md` before selling. What to build next: `docs/ROADMAP.md`.
 - Legal: `public/privacy.html` and `public/terms.html` are **templates** with [BRACKETS]; have a South African attorney complete them. POPIA applies.
